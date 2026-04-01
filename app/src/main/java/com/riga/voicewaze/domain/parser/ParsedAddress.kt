@@ -4,5 +4,5 @@ data class ParsedAddress(
     val streetRaw: String,
     val houseNumber: String?,
     val корпус: String?,
-    val cityRaw: String?
+    val cityRaw: String
 )
