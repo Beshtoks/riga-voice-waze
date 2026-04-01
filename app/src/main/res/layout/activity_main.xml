@@ -1,38 +1,67 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:paddingTop="32dp"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="16dp"
+    android:background="#000000">
 
-    <EditText
-        android:id="@+id/etInput"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Введите адрес (например: Лачплеша 40)"
-        android:textSize="18sp"/>
+        android:orientation="horizontal">
+
+        <EditText
+            android:id="@+id/etInput"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="Введите адрес"
+            android:textColor="#00FF00"
+            android:textColorHint="#00AA00"
+            android:backgroundTint="#00FF00"
+            android:textSize="18sp" />
+
+        <Button
+            android:id="@+id/btnMic"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:text="MIC"
+            android:textColor="#00FF00"
+            android:backgroundTint="#003300" />
+    </LinearLayout>
 
     <Button
         android:id="@+id/btnSearch"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Найти"
-        android:layout_marginTop="16dp"/>
+        android:layout_marginTop="16dp"
+        android:textColor="#00FF00"
+        android:backgroundTint="#003300" />
 
     <TextView
         android:id="@+id/tvResult"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Результат появится здесь"
+        android:text="Результат"
         android:textSize="18sp"
-        android:layout_marginTop="24dp"/>
+        android:layout_marginTop="24dp"
+        android:textColor="#00FF00" />
 
     <Button
         android:id="@+id/btnWaze"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Открыть в Waze"
-        android:layout_marginTop="16dp"/>
+        android:layout_marginTop="16dp"
+        android:textColor="#00FF00"
+        android:backgroundTint="#003300" />
 
 </LinearLayout>
