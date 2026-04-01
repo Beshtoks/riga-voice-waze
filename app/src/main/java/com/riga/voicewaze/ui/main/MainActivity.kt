@@ -14,13 +14,15 @@ import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.riga.voicewaze.R
 import com.riga.voicewaze.data.local.StreetRepository
-import com.riga.voicewaze.domain.matcher.StreetMatchResult
 import com.riga.voicewaze.domain.matcher.StreetMatcher
 import com.riga.voicewaze.domain.parser.AddressParser
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
@@ -38,6 +40,7 @@ class MainActivity : AppCompatActivity() {
     private var autoLaunchAfterVoice: Boolean = false
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val searchExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     private val requestAudioPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -64,28 +67,15 @@ class MainActivity : AppCompatActivity() {
 
             if (spokenText.isNotBlank()) {
                 etInput.setText(spokenText)
-                performSearch()
-
-                if (autoLaunchAfterVoice && lastResult.isNotBlank() && lastMatchWasConfident) {
-                    mainHandler.postDelayed({
-                        openWaze(lastResult)
-                    }, 500)
-                } else if (autoLaunchAfterVoice && !lastMatchWasConfident) {
-                    Toast.makeText(
-                        this,
-                        "Совпадение неуверенное. Проверь адрес перед запуском Waze.",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
+                performSearch(autoLaunchRequested = autoLaunchAfterVoice)
             } else {
+                autoLaunchAfterVoice = false
                 Toast.makeText(
                     this,
                     "Речь не распознана",
                     Toast.LENGTH_SHORT
                 ).show()
             }
-
-            autoLaunchAfterVoice = false
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -107,44 +97,86 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnSearch.setOnClickListener {
-            performSearch()
+            autoLaunchAfterVoice = false
+            performSearch(autoLaunchRequested = false)
         }
 
         btnWaze.setOnClickListener {
-            if (lastResult.isNotBlank()) {
-                openWaze(lastResult)
-            } else {
+            if (lastResult.isBlank()) {
                 Toast.makeText(
                     this,
                     "Сначала выполни поиск адреса",
                     Toast.LENGTH_SHORT
                 ).show()
+                return@setOnClickListener
+            }
+
+            if (lastMatchWasConfident) {
+                openWaze(lastResult)
+            } else {
+                showWazeConfirmationDialog(lastResult)
             }
         }
     }
 
-    private fun performSearch() {
+    override fun onDestroy() {
+        super.onDestroy()
+        searchExecutor.shutdownNow()
+    }
+
+    private fun performSearch(autoLaunchRequested: Boolean) {
         val input = etInput.text.toString().trim()
 
         if (input.isBlank()) {
             tvResult.text = "Введите или скажите адрес"
             lastResult = ""
             lastMatchWasConfident = false
+            autoLaunchAfterVoice = false
             return
         }
 
-        val resolved = processAddress(input)
-        tvResult.text = resolved.displayText
-        lastResult = resolved.addressForWaze
-        lastMatchWasConfident = resolved.isConfident
+        tvResult.text = "Поиск..."
+        btnSearch.isEnabled = false
+        btnMic.isEnabled = false
+        btnWaze.isEnabled = false
+
+        searchExecutor.execute {
+            val resolved = processAddress(input)
+
+            mainHandler.post {
+                btnSearch.isEnabled = true
+                btnMic.isEnabled = true
+                btnWaze.isEnabled = true
+
+                tvResult.text = resolved.displayText
+                lastResult = resolved.addressForWaze
+                lastMatchWasConfident = resolved.isConfident
+
+                if (autoLaunchRequested && lastResult.isNotBlank()) {
+                    if (lastMatchWasConfident) {
+                        mainHandler.postDelayed({
+                            openWaze(lastResult)
+                        }, 500)
+                    } else {
+                        showWazeConfirmationDialog(lastResult)
+                    }
+                }
+
+                autoLaunchAfterVoice = false
+            }
+        }
     }
 
     private fun processAddress(input: String): ResolvedAddress {
         val parsed = addressParser.parse(input)
-        val matchResult = streetMatcher.findBestMatchDetailed(parsed.streetRaw)
+        val matchResult = streetMatcher.findBestMatchDetailed(
+            input = parsed.streetRaw,
+            preferredCity = parsed.cityRaw
+        )
 
         val address = buildAddressString(
             street = matchResult.street,
+            city = matchResult.city,
             houseNumber = parsed.houseNumber,
             corpus = parsed.корпус
         )
@@ -158,25 +190,44 @@ class MainActivity : AppCompatActivity() {
         return ResolvedAddress(
             addressForWaze = address,
             displayText = display,
-            isConfident = matchResult.isConfident,
-            matchResult = matchResult
+            isConfident = matchResult.isConfident
         )
     }
 
     private fun buildAddressString(
         street: String,
+        city: String,
         houseNumber: String?,
         corpus: String?
     ): String {
+        val cityPart = if (city.isBlank()) "Rīga" else city
+
+        val streetFinal = if (street.lowercase().contains("iela")) {
+            street
+        } else {
+            "$street iela"
+        }
+
         if (houseNumber.isNullOrBlank()) {
-            return "$street iela, Rīga"
+            return "$streetFinal, $cityPart, Latvija"
         }
 
         return if (corpus.isNullOrBlank()) {
-            "$street iela $houseNumber, Rīga"
+            "$streetFinal $houseNumber, $cityPart, Latvija"
         } else {
-            "$street iela $houseNumber-$corpus, Rīga"
+            "$streetFinal $houseNumber-$corpus, $cityPart, Latvija"
         }
+    }
+
+    private fun showWazeConfirmationDialog(address: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Совпадение неуверенное")
+            .setMessage("Открыть Waze с этим адресом?\n\n$address")
+            .setPositiveButton("Да") { _, _ ->
+                openWaze(address)
+            }
+            .setNegativeButton("Нет", null)
+            .show()
     }
 
     private fun checkAudioPermissionAndStart() {
@@ -236,7 +287,6 @@ class MainActivity : AppCompatActivity() {
     private data class ResolvedAddress(
         val addressForWaze: String,
         val displayText: String,
-        val isConfident: Boolean,
-        val matchResult: StreetMatchResult
+        val isConfident: Boolean
     )
 }
