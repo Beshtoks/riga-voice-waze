@@ -16,35 +16,62 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal">
 
-        <EditText
-            android:id="@+id/etInput"
+        <Button
+            android:id="@+id/btnMicRu"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:hint="Введите адрес"
-            android:textColor="#00FF00"
-            android:textColorHint="#00AA00"
-            android:backgroundTint="#00FF00"
-            android:textSize="18sp" />
+            android:text="RU"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#2E7D32" />
 
         <Button
-            android:id="@+id/btnMic"
-            android:layout_width="wrap_content"
+            android:id="@+id/btnMicLv"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:text="MIC"
-            android:textColor="#00FF00"
-            android:backgroundTint="#003300" />
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="LV"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#1565C0" />
     </LinearLayout>
 
-    <Button
-        android:id="@+id/btnSearch"
+    <EditText
+        android:id="@+id/etInput"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Найти"
-        android:layout_marginTop="16dp"
-        android:textColor="#00FF00"
-        android:backgroundTint="#003300" />
+        android:layout_marginTop="12dp"
+        android:hint="Введите адрес"
+        android:textColor="#FFFFFF"
+        android:textColorHint="#AAAAAA"
+        android:backgroundTint="#FFFFFF"
+        android:textSize="18sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="16dp">
+
+        <Button
+            android:id="@+id/btnReset"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Сброс"
+            android:textColor="#FF4D4D"
+            android:backgroundTint="#222222" />
+
+        <Button
+            android:id="@+id/btnSearch"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="Найти"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#222222" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/tvResult"
@@ -53,15 +80,24 @@
         android:text="Результат"
         android:textSize="18sp"
         android:layout_marginTop="24dp"
-        android:textColor="#00FF00" />
+        android:textColor="#FFFFFF" />
 
     <Button
         android:id="@+id/btnWaze"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Открыть в Waze"
+        android:text="Открыть Waze"
         android:layout_marginTop="16dp"
-        android:textColor="#00FF00"
-        android:backgroundTint="#003300" />
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#222222" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvSuggestions"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="12dp"
+        android:clipToPadding="false"
+        android:paddingBottom="8dp" />
 
 </LinearLayout>

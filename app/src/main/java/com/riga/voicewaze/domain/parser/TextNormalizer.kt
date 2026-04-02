@@ -2,38 +2,48 @@ package com.riga.voicewaze.domain.parser
 
 object TextNormalizer {
 
+    private val simpleNumbers = mapOf(
+        "viens" to "1",
+        "vienu" to "1",
+        "divi" to "2",
+        "divas" to "2",
+        "trīs" to "3",
+        "tris" to "3",
+        "četri" to "4",
+        "cetri" to "4",
+        "pieci" to "5",
+        "seši" to "6",
+        "sesi" to "6",
+        "septiņi" to "7",
+        "septini" to "7",
+        "astoņi" to "8",
+        "astoni" to "8",
+        "deviņi" to "9",
+        "devini" to "9",
+        "desmit" to "10"
+    )
+
     fun normalize(input: String): String {
         var text = input.lowercase()
 
         text = text
             .replace(",", " ")
             .replace(".", " ")
+            .replace(";", " ")
+            .replace(":", " ")
             .replace("\\s+".toRegex(), " ")
             .trim()
 
-        text = text
-            .replace("jurmala", "jūrmala")
-            .replace("riga", "rīga")
-            .replace("liepaja", "liepāja")
+        if (text.isBlank()) {
+            return ""
+        }
 
-        text = text
-            .replace("viens", "1")
-            .replace("divi", "2")
-            .replace("trīs", "3")
-            .replace("tris", "3")
-            .replace("četri", "4")
-            .replace("cetri", "4")
-            .replace("pieci", "5")
-            .replace("seši", "6")
-            .replace("sesi", "6")
-            .replace("septiņi", "7")
-            .replace("septini", "7")
-            .replace("astoņi", "8")
-            .replace("astoni", "8")
-            .replace("deviņi", "9")
-            .replace("devini", "9")
-            .replace("desmit", "10")
+        val tokens = text.split(" ")
+            .filter { it.isNotBlank() }
+            .map { token ->
+                simpleNumbers[token] ?: token
+            }
 
-        return text.trim()
+        return tokens.joinToString(" ").trim()
     }
 }

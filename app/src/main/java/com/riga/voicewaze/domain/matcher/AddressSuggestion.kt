@@ -1,9 +1,8 @@
 package com.riga.voicewaze.domain.matcher
 
-data class StreetMatchResult(
+data class AddressSuggestion(
     val street: String,
     val city: String,
-    val score: Int,
     val matchPercent: Int,
-    val isConfident: Boolean
+    val score: Int
 )
