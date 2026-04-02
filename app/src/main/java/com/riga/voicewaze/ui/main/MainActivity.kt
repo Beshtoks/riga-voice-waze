@@ -186,7 +186,7 @@ class MainActivity : AppCompatActivity() {
                 if (input.length < 5) {
                     clearSuggestions()
                     if (input.isBlank()) {
-                        tvResult.text = "Результат"
+                        tvResult.text = ""
                         lastAddress = ""
                         lastConfidencePercent = 0
                     }
@@ -418,7 +418,7 @@ class MainActivity : AppCompatActivity() {
         suppressTextWatcher = false
         lastAddress = ""
         lastConfidencePercent = 0
-        tvResult.text = "Результат"
+        tvResult.text = ""
         clearSuggestions()
     }
 
