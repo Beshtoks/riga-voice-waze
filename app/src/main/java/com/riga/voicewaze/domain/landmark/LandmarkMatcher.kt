@@ -8,7 +8,8 @@ class LandmarkMatcher {
         LandmarkEntry("автовокзал", "Prāgas iela 1, Rīga, Latvija"),
         LandmarkEntry("рынок", "Nēģu iela 7, Rīga, Latvija"),
         LandmarkEntry("цирк", "Merķeļa iela 4, Rīga, Latvija"),
-        LandmarkEntry("памятник свободы", "Brīvības laukums 1, Rīga, Latvija"),
+
+        LandmarkEntry("мильда", "Brīvības laukums 1, Rīga, Latvija"),
 
         LandmarkEntry("латвия", "Elizabetes iela 55, Rīga, Latvija"),
         LandmarkEntry("даугава", "Kuģu iela 24, Rīga, Latvija"),
@@ -20,13 +21,12 @@ class LandmarkMatcher {
         LandmarkEntry("гранд палас", "Pils iela 12, Rīga, Latvija"),
         LandmarkEntry("нейбург", "Jauniela 25/27, Rīga, Latvija"),
 
-        LandmarkEntry("велтон риверсайд", "11. novembra krastmala 33, Rīga, Latvija"),
+        LandmarkEntry("риверсайт", "11. novembra krastmala 33, Rīga, Latvija"),
         LandmarkEntry("велтон олд рига", "Vaļņu iela 49, Rīga, Latvija"),
-        LandmarkEntry("велтон центрум", "Kalēju iela 33, Rīga, Latvija"),
+        LandmarkEntry("центрум", "Kalēju iela 33, Rīga, Latvija"),
         LandmarkEntry("велтон рига", "Vaļņu iela 49, Rīga, Latvija"),
 
         LandmarkEntry("метрополь", "Aspazijas bulvāris 36/38, Rīga, Latvija"),
-        LandmarkEntry("форумс", "Vaļņu iela 45, Rīga, Latvija"),
         LandmarkEntry("форум", "Vaļņu iela 45, Rīga, Latvija"),
         LandmarkEntry("риксвелл централ", "Elizabetes iela 101, Rīga, Latvija"),
         LandmarkEntry("риксвелл олд рига", "Minsterejas iela 8/10, Rīga, Latvija"),
@@ -61,6 +61,7 @@ class LandmarkMatcher {
         LandmarkEntry("монте-кристо", "Kalēju iela 56, Rīga, Latvija"),
         LandmarkEntry("окей", "Slokas iela 12, Rīga, Latvija"),
         LandmarkEntry("опера", "Raiņa bulvāris 33, Rīga, Latvija"),
+        LandmarkEntry("опера и балет", "Aspazijas bulvāris 3, Rīga, Latvija"),
         LandmarkEntry("пулман", "Jēkaba iela 24, Rīga, Latvija"),
         LandmarkEntry("томо", "Raunas iela 44, Rīga, Latvija"),
         LandmarkEntry("веф", "Brīvības gatve 199c, Rīga, Latvija"),
@@ -82,7 +83,29 @@ class LandmarkMatcher {
         LandmarkEntry("альфа", "Brīvības gatve 372, Rīga, Latvija"),
         LandmarkEntry("молс", "Krasta iela 46, Rīga, Latvija"),
         LandmarkEntry("спица", "Lielirbes iela 29, Rīga, Latvija"),
-        LandmarkEntry("акрополь", "Maskavas iela 257, Rīga, Latvija")
+        LandmarkEntry("акрополь", "Maskavas iela 257, Rīga, Latvija"),
+
+        LandmarkEntry("страдыня", "Pilsoņu iela 13, Rīga, Latvija"),
+        LandmarkEntry("домина", "Ieriķu iela 3, Rīga, Latvija"),
+        LandmarkEntry("майори", "Jomas iela, Jūrmala, Latvija"),
+
+        LandmarkEntry("сейм", "Jēkaba iela 11, Rīga, Latvija"),
+        LandmarkEntry("гертруда", "Ģertrūdes iela, Rīga, Latvija"),
+        LandmarkEntry("мотормузей", "Sergeja Eizenšteina iela 6, Rīga, Latvija"),
+        LandmarkEntry("этнографический", "Brīvdabas muzejs, Rīga, Latvija"),
+
+        LandmarkEntry("башня", "Smilšu iela 20, Rīga, Latvija"),
+        LandmarkEntry("телебашня", "Zaķusalas televīzijas tornis, Rīga, Latvija"),
+
+        LandmarkEntry("межапарк", "Mežaparks, Rīga, Latvija"),
+        LandmarkEntry("зоопарк", "Meža prospekts 1, Rīga, Latvija"),
+        LandmarkEntry("кишка", "Ķīpsala, Rīga, Latvija"),
+        LandmarkEntry("ботаника", "Kandavas iela 2, Rīga, Latvija"),
+        LandmarkEntry("агентчик", "Rīga, Latvija"),
+        LandmarkEntry("базар", "Centrāltirgus, Rīga, Latvija"),
+        LandmarkEntry("лидо", "Krasta iela 76, Rīga, Latvija"),
+        LandmarkEntry("арена рига", "Skanstes iela 21, Rīga, Latvija"),
+        LandmarkEntry("сконто", "Hanzas iela 5, Rīga, Latvija")
     )
 
     fun findBestMatch(input: String): LandmarkMatchResult {

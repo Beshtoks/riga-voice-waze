@@ -25,6 +25,8 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.riga.voicewaze.R
 import com.riga.voicewaze.data.local.StreetRepository
+import com.riga.voicewaze.domain.cloud.GoogleCloudLatvianTranscriber
+import com.riga.voicewaze.domain.cloud.WavRecorder
 import com.riga.voicewaze.domain.landmark.LandmarkMatcher
 import com.riga.voicewaze.domain.matcher.AddressSuggestion
 import com.riga.voicewaze.domain.matcher.StreetMatcher
@@ -53,6 +55,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var streetMatcher: StreetMatcher
     private lateinit var landmarkMatcher: LandmarkMatcher
     private lateinit var suggestionAdapter: SuggestionAdapter
+    private lateinit var wavRecorder: WavRecorder
+    private lateinit var cloudTranscriber: GoogleCloudLatvianTranscriber
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
 
@@ -61,6 +65,7 @@ class MainActivity : AppCompatActivity() {
     private var lastAddress: String = ""
     private var lastConfidencePercent: Int = 0
     private var suppressTextWatcher: Boolean = false
+    private var isLatvianCloudRecording: Boolean = false
 
     private val speechLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -95,7 +100,10 @@ class MainActivity : AppCompatActivity() {
     private val micPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
-                startVoiceRecognition()
+                when (currentMode) {
+                    VoiceMode.OBJECT_RU -> startGoogleVoiceRecognition()
+                    VoiceMode.ADDRESS_LV -> toggleLatvianCloudRecording()
+                }
             } else {
                 autoOpenAfterVoice = false
                 toast("Нет доступа к микрофону")
@@ -128,6 +136,8 @@ class MainActivity : AppCompatActivity() {
         parser = AddressParser(streetRepository)
         streetMatcher = StreetMatcher(streetRepository)
         landmarkMatcher = LandmarkMatcher()
+        wavRecorder = WavRecorder(cacheDir)
+        cloudTranscriber = GoogleCloudLatvianTranscriber()
 
         suggestionAdapter = SuggestionAdapter { suggestion ->
             onSuggestionSelected(suggestion)
@@ -139,6 +149,9 @@ class MainActivity : AppCompatActivity() {
         setVoiceMode(VoiceMode.ADDRESS_LV)
 
         btnMicRu.setOnClickListener {
+            if (isLatvianCloudRecording) {
+                safeStopLatvianRecording()
+            }
             setVoiceMode(VoiceMode.OBJECT_RU)
             autoOpenAfterVoice = true
             clearSuggestions()
@@ -170,8 +183,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         etInput.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun beforeTextChanged(
+                s: CharSequence?,
+                start: Int,
+                count: Int,
+                after: Int
+            ) = Unit
+
+            override fun onTextChanged(
+                s: CharSequence?,
+                start: Int,
+                before: Int,
+                count: Int
+            ) = Unit
 
             override fun afterTextChanged(s: Editable?) {
                 if (suppressTextWatcher) return
@@ -200,11 +224,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        safeStopLatvianRecording()
         executor.shutdownNow()
     }
 
     private fun setVoiceMode(mode: VoiceMode) {
         currentMode = mode
+        btnMicRu.text = "Объекты"
+        btnMicLv.text = if (isLatvianCloudRecording) "Стоп улицы" else "Улицы"
 
         when (mode) {
             VoiceMode.ADDRESS_LV -> {
@@ -228,7 +255,10 @@ class MainActivity : AppCompatActivity() {
         ) == PackageManager.PERMISSION_GRANTED
 
         if (granted) {
-            startVoiceRecognition()
+            when (currentMode) {
+                VoiceMode.OBJECT_RU -> startGoogleVoiceRecognition()
+                VoiceMode.ADDRESS_LV -> toggleLatvianCloudRecording()
+            }
         } else {
             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
@@ -274,41 +304,59 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processAddressSearch(input: String, autoOpen: Boolean) {
-        val parsed = parser.parse(input)
-        val streetQuery = if (parsed.streetMerged.isNotBlank()) parsed.streetMerged else parsed.streetRaw
+        val houseNumber = extractHouseNumber(input)
 
-        val match = streetMatcher.findBestMatchDetailed(
-            input = streetQuery,
-            preferredCity = parsed.cityRaw
+        val matches = streetMatcher.findTopMatchesForTypedInput(
+            input = input,
+            limit = 10
         )
-
-        val city = if (match.city.isBlank()) "Rīga" else match.city
-        val streetFinal = normalizeStreetForDisplay(match.street)
-
-        val finalAddress = if (streetFinal.isBlank()) {
-            ""
-        } else if (parsed.houseNumber.isNullOrBlank()) {
-            "$streetFinal, $city, Latvija"
-        } else {
-            "$streetFinal ${parsed.houseNumber}, $city, Latvija"
-        }
 
         runOnUiThread {
             finishBusyState()
-            lastAddress = finalAddress
-            lastConfidencePercent = match.matchPercent
 
-            tvResult.text = if (streetFinal.isBlank()) {
-                buildPercentText(
-                    mainText = "Улица не найдена",
-                    percent = match.matchPercent
-                )
+            if (matches.isEmpty()) {
+                clearSuggestions()
+                lastAddress = ""
+                lastConfidencePercent = 0
+                tvResult.text = "Улица не найдена"
+                autoOpenAfterVoice = false
+                return@runOnUiThread
+            }
+
+            val best = matches.first()
+            val street = normalizeStreetForDisplay(best.street)
+            val city = if (best.city.isBlank()) "Rīga" else best.city
+
+            val finalAddress = if (houseNumber.isNullOrBlank()) {
+                "$street, $city, Latvija"
             } else {
-                buildPercentText(
-                    mainText = finalAddress,
-                    percent = match.matchPercent
+                "$street $houseNumber, $city, Latvija"
+            }
+
+            lastAddress = finalAddress
+            lastConfidencePercent = best.matchPercent
+
+            tvResult.text = buildPercentText(
+                mainText = finalAddress,
+                percent = best.matchPercent
+            )
+
+            val others = matches.drop(1).map { suggestion ->
+                val otherStreet = normalizeStreetForDisplay(suggestion.street)
+                val otherCity = if (suggestion.city.isBlank()) "Rīga" else suggestion.city
+                val otherAddress = if (houseNumber.isNullOrBlank()) {
+                    "$otherStreet, $otherCity, Latvija"
+                } else {
+                    "$otherStreet $houseNumber, $otherCity, Latvija"
+                }
+
+                suggestion.copy(
+                    street = otherAddress,
+                    city = ""
                 )
             }
+
+            suggestionAdapter.submitList(others)
 
             if (autoOpen && lastAddress.isNotBlank() && lastConfidencePercent >= 85) {
                 openWaze(lastAddress)
@@ -413,6 +461,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resetInputAndResults() {
+        safeStopLatvianRecording()
         suppressTextWatcher = true
         etInput.setText("")
         suppressTextWatcher = false
@@ -420,6 +469,7 @@ class MainActivity : AppCompatActivity() {
         lastConfidencePercent = 0
         tvResult.text = ""
         clearSuggestions()
+        setVoiceMode(currentMode)
     }
 
     private fun clearSuggestions() {
@@ -434,26 +484,16 @@ class MainActivity : AppCompatActivity() {
         btnWaze.isEnabled = true
     }
 
-    private fun startVoiceRecognition() {
+    private fun startGoogleVoiceRecognition() {
         try {
-            val language = when (currentMode) {
-                VoiceMode.ADDRESS_LV -> "lv-LV"
-                VoiceMode.OBJECT_RU -> "ru-RU"
-            }
-
-            val prompt = when (currentMode) {
-                VoiceMode.ADDRESS_LV -> "Скажи адрес"
-                VoiceMode.OBJECT_RU -> "Скажи объект"
-            }
-
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(
                     RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
                 )
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, language)
-                putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "ru-RU")
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Скажи объект")
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                 putExtra(
                     RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
@@ -476,6 +516,94 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             autoOpenAfterVoice = false
             tvResult.text = "Ошибка запуска: ${e.message ?: "unknown"}"
+        }
+    }
+
+    private fun toggleLatvianCloudRecording() {
+        if (isLatvianCloudRecording) {
+            stopLatvianCloudRecordingAndTranscribe()
+        } else {
+            startLatvianCloudRecording()
+        }
+    }
+
+    private fun startLatvianCloudRecording() {
+        try {
+            wavRecorder.start()
+            isLatvianCloudRecording = true
+            btnMicLv.text = "Стоп улицы"
+            tvResult.text = "Запись адреса... Нажми ещё раз для остановки"
+            clearSuggestions()
+        } catch (e: Exception) {
+            isLatvianCloudRecording = false
+            btnMicLv.text = "Улицы"
+            tvResult.text = "Ошибка записи: ${e.message ?: "unknown"}"
+        }
+    }
+
+    private fun stopLatvianCloudRecordingAndTranscribe() {
+        val audioFile = try {
+            wavRecorder.stop()
+        } catch (e: Exception) {
+            isLatvianCloudRecording = false
+            btnMicLv.text = "Улицы"
+            tvResult.text = "Ошибка остановки записи: ${e.message ?: "unknown"}"
+            return
+        }
+
+        isLatvianCloudRecording = false
+        btnMicLv.text = "Улицы"
+        tvResult.text = "Отправка в облако..."
+        btnMicRu.isEnabled = false
+        btnMicLv.isEnabled = false
+        btnReset.isEnabled = false
+        btnSearch.isEnabled = false
+        btnWaze.isEnabled = false
+
+        executor.execute {
+            try {
+                val transcript = cloudTranscriber.transcribe(audioFile)
+
+                runOnUiThread {
+                    finishBusyState()
+
+                    if (transcript.isBlank()) {
+                        autoOpenAfterVoice = false
+                        tvResult.text = "Облако не распознало адрес"
+                        return@runOnUiThread
+                    }
+
+                    suppressTextWatcher = true
+                    etInput.setText(transcript)
+                    etInput.setSelection(transcript.length)
+                    suppressTextWatcher = false
+
+                    handleSearch(transcript, autoOpenAfterVoice)
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    finishBusyState()
+                    autoOpenAfterVoice = false
+                    tvResult.text = "Ошибка облака: ${e.message ?: "unknown"}"
+                }
+            } finally {
+                audioFile.delete()
+            }
+        }
+    }
+
+    private fun safeStopLatvianRecording() {
+        if (!isLatvianCloudRecording) return
+
+        try {
+            wavRecorder.stop().delete()
+        } catch (_: Exception) {
+        }
+
+        isLatvianCloudRecording = false
+
+        if (::btnMicLv.isInitialized) {
+            btnMicLv.text = "Улицы"
         }
     }
 
