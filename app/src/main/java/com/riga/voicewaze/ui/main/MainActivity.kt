@@ -5,16 +5,24 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognizerIntent
 import android.text.Editable
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextWatcher
 import android.text.style.ForegroundColorSpan
+import android.util.TypedValue
+import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -59,6 +67,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cloudTranscriber: GoogleCloudLatvianTranscriber
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val toneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85)
 
     private var currentMode: VoiceMode = VoiceMode.ADDRESS_LV
     private var autoOpenAfterVoice: Boolean = false
@@ -66,6 +76,28 @@ class MainActivity : AppCompatActivity() {
     private var lastConfidencePercent: Int = 0
     private var suppressTextWatcher: Boolean = false
     private var isLatvianCloudRecording: Boolean = false
+    private var isRecordingDotVisible: Boolean = true
+
+    private var recordingDotView: TextView? = null
+
+    private val recordingBlinkRunnable = object : Runnable {
+        override fun run() {
+            if (!isLatvianCloudRecording) return
+
+            isRecordingDotVisible = !isRecordingDotVisible
+            recordingDotView?.visibility = if (isRecordingDotVisible) View.VISIBLE else View.INVISIBLE
+
+            if (isLatvianCloudRecording) {
+                uiHandler.postDelayed(this, 500L)
+            }
+        }
+    }
+
+    private val buttonLayoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+        if (isLatvianCloudRecording) {
+            positionRecordingDot()
+        }
+    }
 
     private val speechLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -146,6 +178,9 @@ class MainActivity : AppCompatActivity() {
         rvSuggestions.layoutManager = LinearLayoutManager(this)
         rvSuggestions.adapter = suggestionAdapter
 
+        ensureRecordingDotView()
+        btnMicLv.addOnLayoutChangeListener(buttonLayoutListener)
+
         setVoiceMode(VoiceMode.ADDRESS_LV)
 
         btnMicRu.setOnClickListener {
@@ -224,14 +259,78 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        btnMicLv.removeOnLayoutChangeListener(buttonLayoutListener)
+        stopRecordingIndicator()
         safeStopLatvianRecording()
+        toneGenerator.release()
         executor.shutdownNow()
+    }
+
+    private fun ensureRecordingDotView() {
+        if (recordingDotView != null) return
+
+        val root = findViewById<ViewGroup>(android.R.id.content)
+        val dotView = TextView(this).apply {
+            text = "●"
+            setTextColor(Color.RED)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+            visibility = View.GONE
+            isClickable = false
+            isFocusable = false
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        root.addView(dotView)
+        recordingDotView = dotView
+    }
+
+    private fun positionRecordingDot() {
+        val dot = recordingDotView ?: return
+        val root = findViewById<ViewGroup>(android.R.id.content)
+
+        btnMicLv.post {
+            val buttonLocation = IntArray(2)
+            val rootLocation = IntArray(2)
+
+            btnMicLv.getLocationOnScreen(buttonLocation)
+            root.getLocationOnScreen(rootLocation)
+
+            val relativeX = buttonLocation[0] - rootLocation[0]
+            val relativeY = buttonLocation[1] - rootLocation[1]
+
+            if (dot.measuredWidth == 0 || dot.measuredHeight == 0) {
+                dot.measure(
+                    View.MeasureSpec.UNSPECIFIED,
+                    View.MeasureSpec.UNSPECIFIED
+                )
+            }
+
+            val dotWidth = dot.measuredWidth
+            val dotHeight = dot.measuredHeight
+
+            val dotCenterX = relativeX + (btnMicLv.width * 0.83f)
+            val dotCenterY = relativeY + (btnMicLv.height / 2f)
+
+            dot.x = dotCenterX - (dotWidth / 2f)
+            dot.y = dotCenterY - (dotHeight / 2f)
+        }
+    }
+
+    private fun soundStartRecording() {
+        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 180)
+    }
+
+    private fun soundStopRecording() {
+        toneGenerator.startTone(ToneGenerator.TONE_PROP_ACK, 140)
     }
 
     private fun setVoiceMode(mode: VoiceMode) {
         currentMode = mode
         btnMicRu.text = "Объекты"
-        btnMicLv.text = if (isLatvianCloudRecording) "Стоп улицы" else "Улицы"
+        btnMicLv.text = "Улицы"
 
         when (mode) {
             VoiceMode.ADDRESS_LV -> {
@@ -246,6 +345,21 @@ class MainActivity : AppCompatActivity() {
                 etInput.hint = "Введите объект"
             }
         }
+    }
+
+    private fun startRecordingIndicator() {
+        ensureRecordingDotView()
+        stopRecordingIndicator()
+        isRecordingDotVisible = true
+        positionRecordingDot()
+        recordingDotView?.visibility = View.VISIBLE
+        uiHandler.postDelayed(recordingBlinkRunnable, 500L)
+    }
+
+    private fun stopRecordingIndicator() {
+        uiHandler.removeCallbacks(recordingBlinkRunnable)
+        isRecordingDotVisible = true
+        recordingDotView?.visibility = View.GONE
     }
 
     private fun ensureMicPermissionAndStart() {
@@ -531,12 +645,13 @@ class MainActivity : AppCompatActivity() {
         try {
             wavRecorder.start()
             isLatvianCloudRecording = true
-            btnMicLv.text = "Стоп улицы"
+            soundStartRecording()
+            startRecordingIndicator()
             tvResult.text = "Запись адреса... Нажми ещё раз для остановки"
             clearSuggestions()
         } catch (e: Exception) {
             isLatvianCloudRecording = false
-            btnMicLv.text = "Улицы"
+            stopRecordingIndicator()
             tvResult.text = "Ошибка записи: ${e.message ?: "unknown"}"
         }
     }
@@ -546,13 +661,14 @@ class MainActivity : AppCompatActivity() {
             wavRecorder.stop()
         } catch (e: Exception) {
             isLatvianCloudRecording = false
-            btnMicLv.text = "Улицы"
+            stopRecordingIndicator()
             tvResult.text = "Ошибка остановки записи: ${e.message ?: "unknown"}"
             return
         }
 
         isLatvianCloudRecording = false
-        btnMicLv.text = "Улицы"
+        soundStopRecording()
+        stopRecordingIndicator()
         tvResult.text = "Отправка в облако..."
         btnMicRu.isEnabled = false
         btnMicLv.isEnabled = false
@@ -593,7 +709,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun safeStopLatvianRecording() {
-        if (!isLatvianCloudRecording) return
+        if (!isLatvianCloudRecording) {
+            stopRecordingIndicator()
+            return
+        }
 
         try {
             wavRecorder.stop().delete()
@@ -601,10 +720,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         isLatvianCloudRecording = false
-
-        if (::btnMicLv.isInitialized) {
-            btnMicLv.text = "Улицы"
-        }
+        stopRecordingIndicator()
     }
 
     private fun buildPercentText(mainText: String, percent: Int): CharSequence {
@@ -648,7 +764,7 @@ class MainActivity : AppCompatActivity() {
                     lowered.contains("līnija") ||
                     lowered.contains("aleja") ||
                     lowered.contains("gāte") ||
-                    lowered.contains("sēta") ||
+                    lowered.contains("sēта") ||
                     lowered.contains("skvērs") ||
                     lowered.contains("taka") -> street
 
