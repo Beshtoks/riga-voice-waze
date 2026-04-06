@@ -86,7 +86,9 @@ class NominatimHouseValidator {
             if (exactMatch != null) {
                 return HouseValidationResult(
                     status = HouseValidationStatus.VALID,
-                    canonicalHouseNumber = exactMatch.houseNumberRaw
+                    canonicalHouseNumber = exactMatch.houseNumberRaw,
+                    latitude = exactMatch.latitude,
+                    longitude = exactMatch.longitude
                 )
             }
         }
@@ -201,13 +203,17 @@ class NominatimHouseValidator {
                 extractHouseNumberFromDisplayName(displayName)
             }
             val parsedHouse = parseHouseInput(houseNumberRaw)
+            val latitude = item.optString("lat").toDoubleOrNull()
+            val longitude = item.optString("lon").toDoubleOrNull()
 
             list += NominatimMatch(
                 houseNumberRaw = houseNumberRaw,
                 parsedHouse = parsedHouse,
                 normalizedRoad = road,
                 normalizedCity = city,
-                displayHouseNumber = prettifyHouseNumber(houseNumberRaw)
+                displayHouseNumber = prettifyHouseNumber(houseNumberRaw),
+                latitude = latitude,
+                longitude = longitude
             )
         }
 
@@ -425,7 +431,9 @@ data class HouseValidationResult(
     val status: HouseValidationStatus,
     val message: String? = null,
     val relatedHouseNumbers: List<String> = emptyList(),
-    val canonicalHouseNumber: String? = null
+    val canonicalHouseNumber: String? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null
 ) {
     val isValid: Boolean
         get() = status == HouseValidationStatus.VALID
@@ -464,7 +472,9 @@ private data class NominatimMatch(
     val parsedHouse: ParsedHouseInput?,
     val normalizedRoad: String,
     val normalizedCity: String,
-    val displayHouseNumber: String
+    val displayHouseNumber: String,
+    val latitude: Double?,
+    val longitude: Double?
 ) {
     fun uniqueKey(): String {
         return "$displayHouseNumber|$normalizedRoad|$normalizedCity"
