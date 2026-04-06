@@ -13,10 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.speech.RecognizerIntent
 import android.text.Editable
-import android.text.SpannableStringBuilder
-import android.text.Spanned
 import android.text.TextWatcher
-import android.text.style.ForegroundColorSpan
 import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
@@ -87,7 +84,6 @@ class MainActivity : AppCompatActivity() {
     private var currentMode: VoiceMode = VoiceMode.ADDRESS_LV
     private var autoOpenAfterVoice: Boolean = false
     private var lastAddress: String = ""
-    private var lastConfidencePercent: Int = 0
     private var suppressTextWatcher: Boolean = false
     private var lastAddressNeedsHouseValidation: Boolean = false
     private var lastHouseValidationResult: HouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
@@ -259,7 +255,6 @@ class MainActivity : AppCompatActivity() {
                         tvResult.text = ""
                         clearDiagnosticLines()
                         lastAddress = ""
-                        lastConfidencePercent = 0
                         lastAddressNeedsHouseValidation = false
                         lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
                     }
@@ -392,7 +387,6 @@ class MainActivity : AppCompatActivity() {
             tvResult.text = if (currentMode == VoiceMode.ADDRESS_LV) "Введите адрес" else "Введите объект"
             clearDiagnosticLines()
             lastAddress = ""
-            lastConfidencePercent = 0
             lastAddressNeedsHouseValidation = false
             lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
             autoOpenAfterVoice = false
@@ -436,8 +430,7 @@ class MainActivity : AppCompatActivity() {
                 clearSuggestions()
                 clearDiagnosticLines()
                 lastAddress = ""
-                lastConfidencePercent = 0
-                lastAddressNeedsHouseValidation = false
+                    lastAddressNeedsHouseValidation = false
                 lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.NOT_FOUND, "Улица не найдена")
                 tvResult.text = "Улица не найдена"
                 autoOpenAfterVoice = false
@@ -470,26 +463,17 @@ class MainActivity : AppCompatActivity() {
             finishBusyState()
             lastProcessedQuery = processed
             lastAddress = finalAddress
-            lastConfidencePercent = best.matchPercent
             lastAddressNeedsHouseValidation = processed.houseNumber != null
             lastHouseValidationResult = validationResult
 
             tvPrepared.text = if (processed.displayText.isBlank()) "" else "Preprocessor: ${processed.displayText}"
-            tvResult.text = buildPercentText(
-                mainText = "$finalAddress, Latvija",
-                percent = best.matchPercent
-            )
-            tvValidation.text = "Проверка: ${mapValidationStatus(validationResult.status)}"
-            tvCoords.text = formatCoordsLine(validationResult)
+            tvResult.text = "$finalAddress, Latvija"
+            applyValidationUi(validationResult)
 
             suggestionAdapter.submitList(others)
 
-            if (autoOpen &&
-                lastAddress.isNotBlank() &&
-                lastConfidencePercent >= 85 &&
-                validationResult.status == HouseValidationStatus.VALID
-            ) {
-                openWaze(lastAddress)
+            if (autoOpen && lastAddress.isNotBlank() && validationAllowsOpen(validationResult)) {
+                openResolvedDestination(validationResult, lastAddress)
             }
 
             autoOpenAfterVoice = false
@@ -503,18 +487,18 @@ class MainActivity : AppCompatActivity() {
             finishBusyState()
             clearDiagnosticLines()
             lastAddress = match.address
-            lastConfidencePercent = match.matchPercent
             lastAddressNeedsHouseValidation = false
             lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
 
             tvResult.text = if (match.address.isBlank()) {
-                buildPercentText(mainText = "Объект не найден", percent = match.matchPercent)
+                "Объект не найден"
             } else {
-                buildPercentText(mainText = match.address, percent = match.matchPercent)
+                match.address
             }
+            applyValidationUi(lastHouseValidationResult)
 
-            if (autoOpen && lastAddress.isNotBlank() && lastConfidencePercent >= 85) {
-                openWaze(lastAddress)
+            if (autoOpen && lastAddress.isNotBlank()) {
+                openResolvedDestination(lastHouseValidationResult, lastAddress)
             }
 
             autoOpenAfterVoice = false
@@ -539,7 +523,6 @@ class MainActivity : AppCompatActivity() {
                         clearDiagnosticLines()
                         tvResult.text = "Улица не найдена"
                         lastAddress = ""
-                        lastConfidencePercent = 0
                         lastAddressNeedsHouseValidation = false
                         lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.NOT_FOUND, "Улица не найдена")
                     }
@@ -569,14 +552,12 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     lastProcessedQuery = processed
                     lastAddress = bestAddress
-                    lastConfidencePercent = bestOriginal.matchPercent
                     lastAddressNeedsHouseValidation = processed.houseNumber != null
                     lastHouseValidationResult = validationResult
 
                     tvPrepared.text = if (processed.displayText.isBlank()) "" else "Preprocessor: ${processed.displayText}"
-                    tvResult.text = buildPercentText(mainText = "$bestAddress, Latvija", percent = bestOriginal.matchPercent)
-                    tvValidation.text = "Проверка: ${mapValidationStatus(validationResult.status)}"
-                    tvCoords.text = formatCoordsLine(validationResult)
+                    tvResult.text = "$bestAddress, Latvija"
+                    applyValidationUi(validationResult)
 
                     suggestionAdapter.submitList(preparedSuggestions.drop(1))
                 }
@@ -585,11 +566,10 @@ class MainActivity : AppCompatActivity() {
                     clearSuggestions()
                     clearDiagnosticLines()
                     lastAddress = ""
-                    lastConfidencePercent = 0
-                    lastAddressNeedsHouseValidation = false
+                            lastAddressNeedsHouseValidation = false
                     lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.CHECK_FAILED, "Не удалось проверить дом через интернет")
                     tvResult.text = "Не удалось проверить дом через интернет"
-                    tvValidation.text = "Проверка: Ошибка"
+                    applyValidationUi(lastHouseValidationResult)
                 }
             }
         }
@@ -599,23 +579,19 @@ class MainActivity : AppCompatActivity() {
         val parsed = parseDisplayAddress(suggestion.street)
         if (parsed == null) {
             lastAddress = suggestion.street
-            lastConfidencePercent = suggestion.matchPercent
             lastAddressNeedsHouseValidation = false
             lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
-            tvResult.text = buildPercentText(mainText = suggestion.street, percent = suggestion.matchPercent)
-            tvValidation.text = ""
-            tvCoords.text = ""
+            tvResult.text = suggestion.street
+            applyValidationUi(lastHouseValidationResult)
             return
         }
 
         if (parsed.houseNumber.isNullOrBlank()) {
             lastAddress = suggestion.street
-            lastConfidencePercent = suggestion.matchPercent
             lastAddressNeedsHouseValidation = false
             lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
-            tvResult.text = buildPercentText(mainText = suggestion.street, percent = suggestion.matchPercent)
-            tvValidation.text = ""
-            tvCoords.text = ""
+            tvResult.text = suggestion.street
+            applyValidationUi(lastHouseValidationResult)
             return
         }
 
@@ -634,12 +610,10 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 finishBusyState()
                 lastAddress = finalAddress
-                lastConfidencePercent = suggestion.matchPercent
                 lastAddressNeedsHouseValidation = true
                 lastHouseValidationResult = validationResult
-                tvResult.text = buildPercentText(mainText = "$finalAddress, Latvija", percent = suggestion.matchPercent)
-                tvValidation.text = "Проверка: ${mapValidationStatus(validationResult.status)}"
-                tvCoords.text = formatCoordsLine(validationResult)
+                tvResult.text = "$finalAddress, Latvija"
+                applyValidationUi(validationResult)
             }
         }
     }
@@ -650,7 +624,6 @@ class MainActivity : AppCompatActivity() {
         etInput.setText("")
         suppressTextWatcher = false
         lastAddress = ""
-        lastConfidencePercent = 0
         lastAddressNeedsHouseValidation = false
         lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
         tvResult.text = ""
@@ -795,27 +768,40 @@ class MainActivity : AppCompatActivity() {
         stopRecordingIndicator()
     }
 
-    private fun buildPercentText(mainText: String, percent: Int): CharSequence {
-        val percentText = " ($percent%)"
-        val builder = SpannableStringBuilder()
-        builder.append(mainText)
-        val start = builder.length
-        builder.append(percentText)
-        builder.setSpan(
-            ForegroundColorSpan(percentColor(percent)),
-            start,
-            builder.length,
-            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-        )
-        return builder
+    private fun applyValidationUi(result: HouseValidationResult) {
+        val statusText = mapValidationStatus(result.status)
+        tvValidation.text = buildValidationText(statusText, validationColor(result.status))
+        tvCoords.text = if (result.status == HouseValidationStatus.VALID || result.status == HouseValidationStatus.RELATED_FOUND) {
+            formatCoordsLine(result)
+        } else {
+            ""
+        }
     }
 
-    private fun percentColor(percent: Int): Int {
-        return when {
-            percent >= 85 -> Color.parseColor("#4CAF50")
-            percent >= 70 -> Color.parseColor("#FFD54F")
-            else -> Color.parseColor("#F48FB1")
+    private fun buildValidationText(statusText: String, statusColor: Int): CharSequence {
+        val prefix = "Проверка: "
+        val fullText = prefix + statusText
+        return android.text.SpannableString(fullText).apply {
+            setSpan(
+                android.text.style.ForegroundColorSpan(statusColor),
+                prefix.length,
+                fullText.length,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
         }
+    }
+
+    private fun validationColor(status: HouseValidationStatus): Int {
+        return when (status) {
+            HouseValidationStatus.VALID,
+            HouseValidationStatus.RELATED_FOUND -> Color.parseColor("#4CAF50")
+            HouseValidationStatus.NOT_FOUND -> Color.parseColor("#FFA726")
+            HouseValidationStatus.CHECK_FAILED -> Color.parseColor("#FF3B30")
+        }
+    }
+
+    private fun validationAllowsOpen(result: HouseValidationResult): Boolean {
+        return result.status == HouseValidationStatus.VALID || result.status == HouseValidationStatus.RELATED_FOUND
     }
 
     private fun mapValidationStatus(status: HouseValidationStatus): String {
@@ -910,21 +896,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun validateCurrentAddressAndOpenWaze() {
-        if (!lastAddressNeedsHouseValidation) {
-            openWaze(lastAddress)
-            return
-        }
-
-        when (lastHouseValidationResult.status) {
-            HouseValidationStatus.VALID,
-            HouseValidationStatus.RELATED_FOUND,
-            HouseValidationStatus.CHECK_FAILED -> {
-                openWaze(lastAddress)
-            }
-            HouseValidationStatus.NOT_FOUND -> {
-                tvValidation.text = "Проверка: Отсутствует"
-            }
-        }
+        if (lastAddress.isBlank()) return
+        openResolvedDestination(lastHouseValidationResult, lastAddress)
     }
 
     private fun buildWazeQuery(address: String): String {
@@ -938,7 +911,26 @@ class MainActivity : AppCompatActivity() {
         return if (cleanCity.isBlank()) firstPart else "$firstPart, $cleanCity"
     }
 
-    private fun openWaze(address: String) {
+    private fun openResolvedDestination(result: HouseValidationResult, address: String) {
+        if (result.latitude != null && result.longitude != null) {
+            openWazeByCoordinates(result.latitude, result.longitude)
+        } else {
+            openWazeByAddress(address)
+        }
+    }
+
+    private fun openWazeByCoordinates(latitude: Double, longitude: Double) {
+        try {
+            val lat = String.format(Locale.US, "%.6f", latitude)
+            val lon = String.format(Locale.US, "%.6f", longitude)
+            val uri = Uri.parse("https://waze.com/ul?ll=$lat,$lon&navigate=yes")
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
+        } catch (_: Exception) {
+            toast("Не удалось открыть Waze")
+        }
+    }
+
+    private fun openWazeByAddress(address: String) {
         try {
             val wazeQuery = buildWazeQuery(address)
             val uri = Uri.parse("https://waze.com/ul?q=${Uri.encode(wazeQuery)}&navigate=yes")
