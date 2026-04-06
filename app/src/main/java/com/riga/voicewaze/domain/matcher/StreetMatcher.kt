@@ -10,6 +10,7 @@ class StreetMatcher(
 
     private val normalizer = StreetNormalizer()
     private val minStreetsPerCity = 50
+    private val defaultCity = "Rīga"
 
     private data class IndexedStreet(
         val streetEntry: StreetEntry,
@@ -65,6 +66,10 @@ class StreetMatcher(
             }
     }
 
+    private val knownNormalizedCities: Set<String> by lazy {
+        indexedEntries.map { it.normalizedCity }.toSet()
+    }
+
     fun findBestMatch(input: String): String {
         return findBestMatchDetailed(input, null).street
     }
@@ -75,27 +80,19 @@ class StreetMatcher(
     ): StreetMatchResult {
         val normalizedInput = normalizer.normalizeUserInput(input)
 
+        val effectiveCity = resolveEffectiveCity(normalizedInput, preferredCity)
+
         if (normalizedInput.isBlank()) {
             return StreetMatchResult(
                 street = "Nezināma",
-                city = if (preferredCity.isNullOrBlank()) "Rīga" else preferredCity,
+                city = denormalizeCity(effectiveCity),
                 score = Int.MAX_VALUE,
                 matchPercent = 0,
                 isConfident = false
             )
         }
 
-        val preferredNormalizedCity = preferredCity
-            ?.takeIf { it.isNotBlank() }
-            ?.let { normalizeCity(it) }
-
-        val cityFiltered = if (preferredNormalizedCity != null) {
-            indexedEntries.filter { it.normalizedCity == preferredNormalizedCity }
-        } else {
-            emptyList()
-        }
-
-        val searchPool = if (cityFiltered.isNotEmpty()) cityFiltered else indexedEntries
+        val searchPool = buildSearchPool(normalizedInput, preferredCity)
 
         var best: CandidateScore? = null
 
@@ -126,7 +123,7 @@ class StreetMatcher(
         if (winner == null) {
             return StreetMatchResult(
                 street = "Nezināma",
-                city = if (preferredCity.isNullOrBlank()) "Rīga" else preferredCity,
+                city = denormalizeCity(effectiveCity),
                 score = Int.MAX_VALUE,
                 matchPercent = 0,
                 isConfident = false
@@ -153,17 +150,7 @@ class StreetMatcher(
             return emptyList()
         }
 
-        val preferredNormalizedCity = preferredCity
-            ?.takeIf { it.isNotBlank() }
-            ?.let { normalizeCity(it) }
-
-        val cityFiltered = if (preferredNormalizedCity != null) {
-            indexedEntries.filter { it.normalizedCity == preferredNormalizedCity }
-        } else {
-            emptyList()
-        }
-
-        val searchPool = if (cityFiltered.isNotEmpty()) cityFiltered else indexedEntries
+        val searchPool = buildSearchPool(normalizedInput, preferredCity)
 
         val candidates = searchPool.map { candidate ->
             calculateCandidateScore(normalizedInput, candidate)
@@ -201,7 +188,9 @@ class StreetMatcher(
             return emptyList()
         }
 
-        val candidates = indexedEntries.map { candidate ->
+        val searchPool = buildSearchPool(normalizedRaw, null)
+
+        val candidates = searchPool.map { candidate ->
             val percent = calculateTypedInputPercent(queryTokens, candidate)
             val score = 100 - percent
 
@@ -228,6 +217,48 @@ class StreetMatcher(
                     score = candidate.score
                 )
             }
+    }
+
+    private fun buildSearchPool(
+        normalizedInput: String,
+        preferredCity: String?
+    ): List<IndexedStreet> {
+        val effectiveCity = resolveEffectiveCity(normalizedInput, preferredCity)
+        val cityFiltered = indexedEntries.filter { it.normalizedCity == effectiveCity }
+        return if (cityFiltered.isNotEmpty()) cityFiltered else indexedEntries
+    }
+
+    private fun resolveEffectiveCity(
+        normalizedInput: String,
+        preferredCity: String?
+    ): String {
+        detectExplicitCityFromInput(normalizedInput)?.let { return it }
+
+        preferredCity
+            ?.takeIf { it.isNotBlank() }
+            ?.let { normalizeCity(it) }
+            ?.let { return it }
+
+        return normalizeCity(defaultCity)
+    }
+
+    private fun detectExplicitCityFromInput(normalizedInput: String): String? {
+        if (normalizedInput.isBlank()) return null
+
+        val paddedInput = " ${normalizeFreeText(normalizedInput)} "
+
+        return knownNormalizedCities
+            .sortedByDescending { it.length }
+            .firstOrNull { city ->
+                city.isNotBlank() && paddedInput.contains(" $city ")
+            }
+    }
+
+    private fun denormalizeCity(normalizedCity: String): String {
+        return indexedEntries.firstOrNull { it.normalizedCity == normalizedCity }
+            ?.streetEntry
+            ?.city
+            ?: defaultCity
     }
 
     private fun calculateCandidateScore(
