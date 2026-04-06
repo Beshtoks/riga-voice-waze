@@ -16,7 +16,9 @@ class StreetMatcher(
         val normalizedOfficial: String,
         val normalizedAliases: List<String>,
         val normalizedCity: String,
-        val candidateTokens: List<String>
+        val candidateTokens: List<String>,
+        val officialTokens: List<String>,
+        val aliasTokenGroups: List<List<String>>
     )
 
     private data class CandidateScore(
@@ -48,12 +50,17 @@ class StreetMatcher(
                     city = normalizedCity
                 )
 
+                val officialTokens = splitTokens(normalizedOfficial)
+                val aliasTokenGroups = normalizedAliases.map { splitTokens(it) }
+
                 IndexedStreet(
                     streetEntry = entry,
                     normalizedOfficial = normalizedOfficial,
                     normalizedAliases = normalizedAliases,
                     normalizedCity = normalizedCity,
-                    candidateTokens = tokens
+                    candidateTokens = tokens,
+                    officialTokens = officialTokens,
+                    aliasTokenGroups = aliasTokenGroups
                 )
             }
     }
@@ -255,9 +262,10 @@ class StreetMatcher(
     ): Int {
         if (queryTokens.isEmpty()) return 0
 
-        var total = 0.0
+        var tokenAverage = 0.0
         var cityMatched = false
-        var streetMatched = false
+        var exactStreetTokenMatches = 0
+        var strongStreetTokenMatches = 0
 
         for (queryToken in queryTokens) {
             var bestForToken = 0
@@ -269,27 +277,82 @@ class StreetMatcher(
                 }
             }
 
-            if (bestForToken >= 85) {
-                if (similarityPercent(queryToken, candidate.normalizedCity) >= 85) {
-                    cityMatched = true
-                }
-                if (similarityPercent(queryToken, candidate.normalizedOfficial) >= 60 ||
-                    candidate.normalizedAliases.any { similarityPercent(queryToken, it) >= 60 }
-                ) {
-                    streetMatched = true
-                }
+            tokenAverage += bestForToken.toDouble()
+
+            if (similarityPercent(queryToken, candidate.normalizedCity) >= 90) {
+                cityMatched = true
             }
 
-            total += bestForToken.toDouble()
+            val bestOfficialTokenPercent = candidate.officialTokens.maxOfOrNull {
+                similarityPercent(queryToken, it)
+            } ?: 0
+
+            val bestAliasTokenPercent = candidate.aliasTokenGroups
+                .flatten()
+                .maxOfOrNull { similarityPercent(queryToken, it) } ?: 0
+
+            val bestStreetTokenPercent = maxOf(bestOfficialTokenPercent, bestAliasTokenPercent)
+
+            if (bestStreetTokenPercent >= 95) {
+                exactStreetTokenMatches++
+            }
+            if (bestStreetTokenPercent >= 85) {
+                strongStreetTokenMatches++
+            }
         }
 
-        var finalPercent = (total / queryTokens.size.toDouble()).toInt()
+        var finalPercent = (tokenAverage / queryTokens.size.toDouble()).toInt()
 
-        if (queryTokens.size >= 2 && cityMatched && streetMatched) {
-            finalPercent += 8
+        val firstQueryToken = queryTokens.firstOrNull().orEmpty()
+        val firstStreetTokenPercent = bestStreetTokenPercent(firstQueryToken, candidate)
+
+        when {
+            firstStreetTokenPercent >= 98 -> finalPercent += 18
+            firstStreetTokenPercent >= 95 -> finalPercent += 15
+            firstStreetTokenPercent >= 90 -> finalPercent += 12
+            firstStreetTokenPercent >= 85 -> finalPercent += 8
+            firstStreetTokenPercent >= 75 -> finalPercent += 2
+            else -> finalPercent -= 18
+        }
+
+        if (strongStreetTokenMatches == queryTokens.size) {
+            finalPercent += 10
+        } else if (strongStreetTokenMatches >= 2) {
+            finalPercent += 6
+        }
+
+        if (exactStreetTokenMatches >= 2) {
+            finalPercent += 6
+        } else if (exactStreetTokenMatches == 1) {
+            finalPercent += 3
+        }
+
+        if (queryTokens.size >= 2 && cityMatched && strongStreetTokenMatches >= 1) {
+            finalPercent += 6
+        }
+
+        if (queryTokens.size == 1 && firstStreetTokenPercent < 80) {
+            finalPercent -= 10
         }
 
         return finalPercent.coerceIn(0, 100)
+    }
+
+    private fun bestStreetTokenPercent(
+        queryToken: String,
+        candidate: IndexedStreet
+    ): Int {
+        if (queryToken.isBlank()) return 0
+
+        val officialBest = candidate.officialTokens.maxOfOrNull {
+            similarityPercent(queryToken, it)
+        } ?: 0
+
+        val aliasBest = candidate.aliasTokenGroups
+            .flatten()
+            .maxOfOrNull { similarityPercent(queryToken, it) } ?: 0
+
+        return maxOf(officialBest, aliasBest)
     }
 
     private fun buildCandidateTokens(
@@ -318,9 +381,10 @@ class StreetMatcher(
             .split(" ")
             .map { it.trim() }
             .filter { it.isNotBlank() }
-            .filterNot { isHouseNumberToken(it) }
             .map { normalizeFreeText(it) }
             .filter { it.isNotBlank() }
+            .filterNot { isHouseNumberToken(it) }
+            .filterNot { isHouseSuffixToken(it) }
     }
 
     private fun splitTokens(value: String): List<String> {
@@ -334,6 +398,12 @@ class StreetMatcher(
 
     private fun isHouseNumberToken(token: String): Boolean {
         return token.matches(Regex("""^\d+[a-zA-ZА-Яа-я]?(?:/\d+[a-zA-ZА-Яа-я]?)?$"""))
+    }
+
+    private fun isHouseSuffixToken(token: String): Boolean {
+        return token == "k" ||
+                token.matches(Regex("""^k\d+[a-zA-ZА-Яа-я]?$""")) ||
+                token.matches(Regex("""^\d+[a-zA-ZА-Яа-я]?$"""))
     }
 
     private fun normalizeFreeText(value: String): String {
