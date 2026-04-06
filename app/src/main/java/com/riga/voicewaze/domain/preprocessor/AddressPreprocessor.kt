@@ -18,13 +18,7 @@ class AddressPreprocessor {
             .replace(Regex("\\s+"), " ")
 
         if (cleanedOriginal.isBlank()) {
-            return ProcessedAddressQuery(
-                rawInput = rawText,
-                matcherInput = "",
-                displayText = "",
-                houseNumber = null,
-                city = "Rīga"
-            )
+            return emptyQuery(rawText)
         }
 
         val normalized = cleanedOriginal
@@ -36,27 +30,21 @@ class AddressPreprocessor {
             .trim()
 
         if (normalized.isBlank()) {
-            return ProcessedAddressQuery(
-                rawInput = rawText,
-                matcherInput = "",
-                displayText = "",
-                houseNumber = null,
-                city = "Rīga"
-            )
+            return emptyQuery(rawText)
         }
 
-        val city = extractCity(normalized) ?: "Rīga"
         val tokens = normalized
             .split(" ")
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .toMutableList()
 
-        removeCityTokens(tokens)
+        val explicitCity = extractExplicitCityFromEnd(tokens)
+        val city = explicitCity ?: "Rīga"
 
         if (tokens.isEmpty()) {
             return ProcessedAddressQuery(
-                rawInput = rawText,
+                rawInput = cleanedOriginal,
                 matcherInput = "",
                 displayText = "",
                 houseNumber = null,
@@ -72,10 +60,10 @@ class AddressPreprocessor {
 
         if (parsed.streetBase.isBlank()) {
             return ProcessedAddressQuery(
-                rawInput = rawText,
+                rawInput = cleanedOriginal,
                 matcherInput = cleanedOriginal,
                 displayText = cleanedOriginal,
-                houseNumber = null,
+                houseNumber = parsed.houseNumber,
                 city = city
             )
         }
@@ -114,6 +102,41 @@ class AddressPreprocessor {
             houseNumber = finalHouseNumber,
             city = city
         )
+    }
+
+    private fun emptyQuery(rawInput: String): ProcessedAddressQuery {
+        return ProcessedAddressQuery(
+            rawInput = rawInput,
+            matcherInput = "",
+            displayText = "",
+            houseNumber = null,
+            city = "Rīga"
+        )
+    }
+
+    private fun extractExplicitCityFromEnd(tokens: MutableList<String>): String? {
+        if (tokens.isEmpty()) return null
+
+        val lastOriginal = tokens.last()
+        val normalizedLast = normalizeToken(lastOriginal)
+        if (normalizedLast.isBlank()) return null
+
+        return if (looksLikeExplicitCity(lastOriginal, normalizedLast)) {
+            tokens.removeAt(tokens.lastIndex)
+            capitalizeLatvianWords(normalizedLast)
+        } else {
+            null
+        }
+    }
+
+    private fun looksLikeExplicitCity(original: String, normalized: String): Boolean {
+        if (normalized.isBlank()) return false
+        if (normalized.any { it.isDigit() }) return false
+        if (isStreetTypeToken(normalized)) return false
+        if (isCorpusKeyword(normalized.lowercase(Locale.ROOT))) return false
+
+        val first = original.trim().firstOrNull() ?: return false
+        return first.isUpperCase()
     }
 
     private fun startsWithHouseNumber(tokens: List<String>): Boolean {
@@ -306,23 +329,6 @@ class AddressPreprocessor {
         return token.equals("nr", ignoreCase = true) ||
             token.equals("nams", ignoreCase = true) ||
             token == "-"
-    }
-
-    private fun extractCity(text: String): String? {
-        val lower = text.lowercase(Locale("lv", "LV"))
-
-        return when {
-            Regex("(^|\\s)rīga($|\\s)", RegexOption.IGNORE_CASE).containsMatchIn(lower) -> "Rīga"
-            Regex("(^|\\s)rigā($|\\s)", RegexOption.IGNORE_CASE).containsMatchIn(lower) -> "Rīga"
-            else -> null
-        }
-    }
-
-    private fun removeCityTokens(tokens: MutableList<String>) {
-        tokens.removeAll { token ->
-            val t = normalizeToken(token).lowercase(Locale("lv", "LV"))
-            t == "rīga" || t == "rigā"
-        }
     }
 
     private fun capitalizeLatvianWords(text: String): String {
