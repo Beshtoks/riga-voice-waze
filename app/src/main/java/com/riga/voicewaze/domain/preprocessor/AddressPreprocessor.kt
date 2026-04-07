@@ -13,8 +13,13 @@ data class ProcessedAddressQuery(
 class AddressPreprocessor {
 
     fun process(rawText: String): ProcessedAddressQuery {
-        val cleanedOriginal = rawText.trim().replace(Regex("\\s+"), " ")
-        if (cleanedOriginal.isBlank()) return emptyQuery(rawText)
+        val cleanedOriginal = rawText
+            .trim()
+            .replace(Regex("\\s+"), " ")
+
+        if (cleanedOriginal.isBlank()) {
+            return emptyQuery(rawText)
+        }
 
         val normalized = cleanedOriginal
             .replace(",", " ")
@@ -24,14 +29,27 @@ class AddressPreprocessor {
             .replace(Regex("\\s+"), " ")
             .trim()
 
-        if (normalized.isBlank()) return emptyQuery(rawText)
+        if (normalized.isBlank()) {
+            return emptyQuery(rawText)
+        }
 
-        val tokens = normalized.split(" ").filter { it.isNotBlank() }.toMutableList()
+        val tokens = normalized
+            .split(" ")
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .toMutableList()
 
-        val city = extractCity(tokens) ?: "Rīga"
+        val explicitCity = extractExplicitCityFromEnd(tokens)
+        val city = explicitCity ?: "Rīga"
 
         if (tokens.isEmpty()) {
-            return ProcessedAddressQuery(cleanedOriginal, "", "", null, city)
+            return ProcessedAddressQuery(
+                rawInput = cleanedOriginal,
+                matcherInput = "",
+                displayText = "",
+                houseNumber = null,
+                city = city
+            )
         }
 
         val parsed = if (startsWithHouseNumber(tokens)) {
@@ -41,111 +59,301 @@ class AddressPreprocessor {
         }
 
         if (parsed.streetBase.isBlank()) {
-            return ProcessedAddressQuery(cleanedOriginal, cleanedOriginal, cleanedOriginal, null, city)
+            return ProcessedAddressQuery(
+                rawInput = cleanedOriginal,
+                matcherInput = cleanedOriginal,
+                displayText = cleanedOriginal,
+                houseNumber = parsed.houseNumber,
+                city = city
+            )
         }
 
         val streetName = buildStreetName(parsed.streetBase)
         val housePart = buildHousePart(parsed.houseNumber, parsed.corpusNumber)
 
-        val displayText = (streetName + " " + housePart).trim() + ", " + city
-        val matcherInput = (streetName + " " + housePart).trim()
+        val displayText = buildString {
+            append(streetName)
+            if (housePart.isNotBlank()) {
+                append(" ")
+                append(housePart)
+            }
+            append(", ")
+            append(city)
+        }.trim()
 
-        val finalHouse = if (parsed.houseNumber == null) null
-        else if (parsed.corpusNumber == null) parsed.houseNumber
-        else "${parsed.houseNumber} k-${parsed.corpusNumber}"
+        val matcherInput = buildString {
+            append(streetName)
+            if (housePart.isNotBlank()) {
+                append(" ")
+                append(housePart)
+            }
+        }.trim()
+
+        val finalHouseNumber = when {
+            parsed.houseNumber.isNullOrBlank() -> null
+            parsed.corpusNumber.isNullOrBlank() -> parsed.houseNumber
+            else -> "${parsed.houseNumber} k-${parsed.corpusNumber}"
+        }
 
         return ProcessedAddressQuery(
             rawInput = cleanedOriginal,
             matcherInput = matcherInput,
             displayText = displayText,
-            houseNumber = finalHouse,
+            houseNumber = finalHouseNumber,
             city = city
         )
     }
 
-    private fun emptyQuery(raw: String) = ProcessedAddressQuery(raw, "", "", null, "Rīga")
+    private fun emptyQuery(rawInput: String): ProcessedAddressQuery {
+        return ProcessedAddressQuery(
+            rawInput = rawInput,
+            matcherInput = "",
+            displayText = "",
+            houseNumber = null,
+            city = "Rīga"
+        )
+    }
 
-    private fun extractCity(tokens: MutableList<String>): String? {
+    private fun extractExplicitCityFromEnd(tokens: MutableList<String>): String? {
         if (tokens.isEmpty()) return null
 
-        val last = tokens.last()
-        val norm = normalizeToken(last)
+        val lastOriginal = tokens.last()
+        val normalizedLast = normalizeToken(lastOriginal)
+        if (normalizedLast.isBlank()) return null
 
-        if (last.firstOrNull()?.isUpperCase() == true && norm.isNotBlank()) {
-            tokens.removeLast()
-            return capitalize(norm)
+        return if (looksLikeExplicitCity(lastOriginal, normalizedLast)) {
+            tokens.removeAt(tokens.lastIndex)
+            capitalizeLatvianWords(normalizedLast)
+        } else {
+            null
+        }
+    }
+
+    private fun looksLikeExplicitCity(original: String, normalized: String): Boolean {
+        if (normalized.isBlank()) return false
+        if (normalized.any { it.isDigit() }) return false
+        if (isStreetTypeToken(normalized)) return false
+        if (isCorpusKeyword(normalized.lowercase(Locale.ROOT))) return false
+
+        val first = original.trim().firstOrNull() ?: return false
+        return first.isUpperCase()
+    }
+
+    private fun startsWithHouseNumber(tokens: List<String>): Boolean {
+        if (tokens.isEmpty()) return false
+        val first = normalizeToken(tokens.first())
+        return isHouseNumberToken(first)
+    }
+
+    private fun parseStreetFirst(tokens: List<String>): ParsedAddress {
+        val streetTokens = mutableListOf<String>()
+        var houseNumber: String? = null
+        var corpusNumber: String? = null
+
+        var i = 0
+        while (i < tokens.size) {
+            val token = normalizeToken(tokens[i])
+
+            if (token.isBlank()) {
+                i++
+                continue
+            }
+
+            if (houseNumber == null && isHouseNumberToken(token)) {
+                houseNumber = token
+                i++
+
+                val corpus = tryParseCorpus(tokens, i)
+                if (corpus != null) {
+                    corpusNumber = corpus.number
+                    i = corpus.nextIndex
+                }
+                continue
+            }
+
+            if (houseNumber != null) {
+                val corpus = tryParseCorpus(tokens, i)
+                if (corpus != null) {
+                    corpusNumber = corpus.number
+                    i = corpus.nextIndex
+                    continue
+                }
+            }
+
+            if (!shouldSkipToken(token) && !isStreetTypeToken(token)) {
+                streetTokens.add(token)
+            }
+
+            i++
         }
 
-        if (!norm.any { it.isDigit() } &&
-            !isStreetType(norm) &&
-            !isCorpus(norm)) {
-            tokens.removeLast()
-            return capitalize(norm)
+        return ParsedAddress(
+            streetBase = normalizeStreetBase(streetTokens),
+            houseNumber = houseNumber,
+            corpusNumber = corpusNumber
+        )
+    }
+
+    private fun parseHouseFirst(tokens: List<String>): ParsedAddress {
+        var i = 0
+
+        val houseNumber = normalizeHouseNumber(tokens.getOrNull(i).orEmpty())
+        i++
+
+        var corpusNumber: String? = null
+        val initialCorpus = tryParseCorpus(tokens, i)
+        if (initialCorpus != null) {
+            corpusNumber = initialCorpus.number
+            i = initialCorpus.nextIndex
+        }
+
+        val streetTokens = mutableListOf<String>()
+        while (i < tokens.size) {
+            val token = normalizeToken(tokens[i])
+
+            if (token.isBlank()) {
+                i++
+                continue
+            }
+
+            val laterCorpus = tryParseCorpus(tokens, i)
+            if (laterCorpus != null) {
+                corpusNumber = laterCorpus.number
+                i = laterCorpus.nextIndex
+                continue
+            }
+
+            if (!shouldSkipToken(token) && !isStreetTypeToken(token)) {
+                streetTokens.add(token)
+            }
+
+            i++
+        }
+
+        return ParsedAddress(
+            streetBase = normalizeStreetBase(streetTokens),
+            houseNumber = houseNumber.ifBlank { null },
+            corpusNumber = corpusNumber
+        )
+    }
+
+    private fun buildStreetName(streetBase: String): String {
+        val base = streetBase.trim()
+        if (base.isBlank()) return ""
+
+        val withType = if (base.endsWith(" iela", ignoreCase = true)) {
+            base
+        } else {
+            "$base iela"
+        }
+
+        return capitalizeLatvianWords(withType)
+    }
+
+    private fun buildHousePart(houseNumber: String?, corpusNumber: String?): String {
+        if (houseNumber.isNullOrBlank()) return ""
+        return if (corpusNumber.isNullOrBlank()) {
+            houseNumber
+        } else {
+            "$houseNumber k-$corpusNumber"
+        }
+    }
+
+    private fun normalizeStreetBase(tokens: List<String>): String {
+        return tokens
+            .map { normalizeStreetWord(it) }
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+            .trim()
+    }
+
+    private fun normalizeStreetWord(word: String): String {
+        return word
+            .replace(Regex("[^\\p{L}\\p{N}-]"), "")
+            .trim()
+    }
+
+    private fun normalizeHouseNumber(token: String): String {
+        return normalizeToken(token)
+    }
+
+    private fun normalizeToken(token: String): String {
+        return token
+            .trim()
+            .replace(Regex("[^\\p{L}\\p{N}/-]"), "")
+    }
+
+    private fun isHouseNumberToken(token: String): Boolean {
+        if (token.isBlank()) return false
+
+        return Regex("^\\d+[A-Za-zА-Яа-я]?$").matches(token) ||
+            Regex("^\\d+[/-]\\d+[A-Za-zА-Яа-я]?$").matches(token)
+    }
+
+    private fun tryParseCorpus(tokens: List<String>, startIndex: Int): CorpusParseResult? {
+        if (startIndex >= tokens.size) return null
+
+        val token = normalizeToken(tokens[startIndex]).lowercase(Locale.ROOT)
+        if (token.isBlank()) return null
+
+        if (Regex("^k-?\\d+[A-Za-zА-Яа-я]?$").matches(token)) {
+            val number = token
+                .removePrefix("k")
+                .removePrefix("-")
+                .trim()
+
+            if (number.isNotBlank()) {
+                return CorpusParseResult(number = number, nextIndex = startIndex + 1)
+            }
+        }
+
+        if (isCorpusKeyword(token) && startIndex + 1 < tokens.size) {
+            val next = normalizeToken(tokens[startIndex + 1])
+            if (isHouseNumberToken(next)) {
+                return CorpusParseResult(number = next, nextIndex = startIndex + 2)
+            }
         }
 
         return null
     }
 
-    private fun startsWithHouseNumber(tokens: List<String>): Boolean {
-        return normalizeToken(tokens.firstOrNull() ?: "").matches(Regex("^\\d+"))
+    private fun isCorpusKeyword(token: String): Boolean {
+        return token == "korpuss" || token == "korpus" || token == "k"
     }
 
-    private fun parseStreetFirst(tokens: List<String>): Parsed {
-        val street = mutableListOf<String>()
-        var house: String? = null
+    private fun isStreetTypeToken(token: String): Boolean {
+        return token.equals("iela", ignoreCase = true)
+    }
 
-        for (t in tokens) {
-            val n = normalizeToken(t)
-            if (house == null && n.matches(Regex("^\\d+"))) {
-                house = n
-                continue
+    private fun shouldSkipToken(token: String): Boolean {
+        return token.equals("nr", ignoreCase = true) ||
+            token.equals("nams", ignoreCase = true) ||
+            token == "-"
+    }
+
+    private fun capitalizeLatvianWords(text: String): String {
+        return text
+            .split(" ")
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { part ->
+                part.replaceFirstChar { ch ->
+                    if (ch.isLowerCase()) {
+                        ch.titlecase(Locale("lv", "LV"))
+                    } else {
+                        ch.toString()
+                    }
+                }
             }
-            if (!isStreetType(n) && !isCorpus(n)) {
-                street.add(n)
-            }
-        }
-
-        return Parsed(street.joinToString(" "), house, null)
     }
 
-    private fun parseHouseFirst(tokens: List<String>): Parsed {
-        val house = normalizeToken(tokens.first())
-        val street = tokens.drop(1).map { normalizeToken(it) }
-            .filter { !isStreetType(it) && !isCorpus(it) }
-
-        return Parsed(street.joinToString(" "), house, null)
-    }
-
-    private fun buildStreetName(base: String): String {
-        if (base.isBlank()) return ""
-        val name = if (base.endsWith("iela", true)) base else "$base iela"
-        return capitalize(name)
-    }
-
-    private fun buildHousePart(h: String?, c: String?): String {
-        if (h == null) return ""
-        return if (c == null) h else "$h k-$c"
-    }
-
-    private fun normalizeToken(s: String): String {
-        return s.lowercase().replace(Regex("[^\\p{L}\\p{N}]"), "")
-    }
-
-    private fun isStreetType(s: String) =
-        s.equals("iela", true) || s.equals("gatve", true)
-
-    private fun isCorpus(s: String) =
-        s.equals("korpuss", true) || s.equals("k", true)
-
-    private fun capitalize(text: String): String {
-        return text.split(" ").joinToString(" ") {
-            it.replaceFirstChar { c -> c.uppercase() }
-        }
-    }
-
-    private data class Parsed(
+    private data class ParsedAddress(
         val streetBase: String,
         val houseNumber: String?,
         val corpusNumber: String?
+    )
+
+    private data class CorpusParseResult(
+        val number: String,
+        val nextIndex: Int
     )
 }
