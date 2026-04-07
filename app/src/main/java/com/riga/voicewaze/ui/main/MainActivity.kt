@@ -430,7 +430,7 @@ class MainActivity : AppCompatActivity() {
                 clearSuggestions()
                 clearDiagnosticLines()
                 lastAddress = ""
-                    lastAddressNeedsHouseValidation = false
+                lastAddressNeedsHouseValidation = false
                 lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.NOT_FOUND, "Улица не найдена")
                 tvResult.text = "Улица не найдена"
                 autoOpenAfterVoice = false
@@ -482,23 +482,28 @@ class MainActivity : AppCompatActivity() {
 
     private fun processObjectSearch(input: String, autoOpen: Boolean) {
         val match = landmarkMatcher.findBestMatch(input)
+        val accepted = match.isConfident && match.address.isNotBlank()
 
         runOnUiThread {
             finishBusyState()
             clearDiagnosticLines()
-            lastAddress = match.address
-            lastAddressNeedsHouseValidation = false
-            lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
 
-            tvResult.text = if (match.address.isBlank()) {
-                "Объект не найден"
+            if (accepted) {
+                lastAddress = match.address
+                lastAddressNeedsHouseValidation = false
+                lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
+                tvResult.text = match.address
+                applyValidationUi(lastHouseValidationResult)
+
+                if (autoOpen) {
+                    openResolvedDestination(lastHouseValidationResult, lastAddress)
+                }
             } else {
-                match.address
-            }
-            applyValidationUi(lastHouseValidationResult)
-
-            if (autoOpen && lastAddress.isNotBlank()) {
-                openResolvedDestination(lastHouseValidationResult, lastAddress)
+                lastAddress = ""
+                lastAddressNeedsHouseValidation = false
+                lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.NOT_FOUND, "Объект не найден")
+                tvResult.text = "Объект не найден"
+                applyValidationUi(lastHouseValidationResult)
             }
 
             autoOpenAfterVoice = false
@@ -566,7 +571,7 @@ class MainActivity : AppCompatActivity() {
                     clearSuggestions()
                     clearDiagnosticLines()
                     lastAddress = ""
-                            lastAddressNeedsHouseValidation = false
+                    lastAddressNeedsHouseValidation = false
                     lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.CHECK_FAILED, "Не удалось проверить дом через интернет")
                     tvResult.text = "Не удалось проверить дом через интернет"
                     applyValidationUi(lastHouseValidationResult)
@@ -835,20 +840,20 @@ class MainActivity : AppCompatActivity() {
 
         return when {
             lowered.contains("iela") ||
-                lowered.contains("gatve") ||
-                lowered.contains("prospekts") ||
-                lowered.contains("bulvāris") ||
-                lowered.contains("laukums") ||
-                lowered.contains("krastmala") ||
-                lowered.contains("ceļš") ||
-                lowered.contains("dambis") ||
-                lowered.contains("šķērslīnija") ||
-                lowered.contains("līnija") ||
-                lowered.contains("aleja") ||
-                lowered.contains("gāte") ||
-                lowered.contains("sēta") ||
-                lowered.contains("skvērs") ||
-                lowered.contains("taka") -> street
+                    lowered.contains("gatve") ||
+                    lowered.contains("prospekts") ||
+                    lowered.contains("bulvāris") ||
+                    lowered.contains("laukums") ||
+                    lowered.contains("krastmala") ||
+                    lowered.contains("ceļš") ||
+                    lowered.contains("dambis") ||
+                    lowered.contains("šķērslīnija") ||
+                    lowered.contains("līnija") ||
+                    lowered.contains("aleja") ||
+                    lowered.contains("gāte") ||
+                    lowered.contains("sēta") ||
+                    lowered.contains("skvērs") ||
+                    lowered.contains("taka") -> street
             else -> "$street iela"
         }
     }
