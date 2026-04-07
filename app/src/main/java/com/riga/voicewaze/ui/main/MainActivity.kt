@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnMicLv: Button
     private lateinit var etInput: EditText
     private lateinit var tvPrepared: TextView
+    private lateinit var tvObject: TextView
     private lateinit var tvResult: TextView
     private lateinit var tvValidation: TextView
     private lateinit var tvCoords: TextView
@@ -172,6 +173,7 @@ class MainActivity : AppCompatActivity() {
         btnMicLv = findViewById(R.id.btnMicLv)
         etInput = findViewById(R.id.etInput)
         tvPrepared = findViewById(R.id.tvPrepared)
+        tvObject = findViewById(R.id.tvObject)
         tvResult = findViewById(R.id.tvResult)
         tvValidation = findViewById(R.id.tvValidation)
         tvCoords = findViewById(R.id.tvCoords)
@@ -490,6 +492,13 @@ class MainActivity : AppCompatActivity() {
             lastAddressNeedsHouseValidation = false
             lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
 
+            tvPrepared.text = if (input.isBlank()) "" else "Услышано: $input"
+            tvObject.text = if (match.name.isBlank()) {
+                ""
+            } else {
+                "Объект: ${formatLandmarkName(match.name)}"
+            }
+
             tvResult.text = if (match.address.isBlank()) {
                 "Объект не найден"
             } else {
@@ -634,6 +643,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun clearDiagnosticLines() {
         tvPrepared.text = ""
+        tvObject.text = ""
         tvValidation.text = ""
         tvCoords.text = ""
     }
@@ -766,6 +776,22 @@ class MainActivity : AppCompatActivity() {
 
         isLatvianCloudRecording = false
         stopRecordingIndicator()
+    }
+
+    private fun formatLandmarkName(name: String): String {
+        return name
+            .trim()
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { part ->
+                part.replaceFirstChar { ch ->
+                    if (ch.isLowerCase()) {
+                        ch.titlecase(Locale("ru", "RU"))
+                    } else {
+                        ch.toString()
+                    }
+                }
+            }
     }
 
     private fun applyValidationUi(result: HouseValidationResult) {
