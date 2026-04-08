@@ -1,6 +1,7 @@
 package com.riga.voicewaze.ui.main
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -20,18 +21,22 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.riga.voicewaze.R
+import com.riga.voicewaze.data.local.LandmarkRepository
 import com.riga.voicewaze.data.local.StreetRepository
 import com.riga.voicewaze.domain.cloud.GoogleCloudLatvianTranscriber
 import com.riga.voicewaze.domain.cloud.WavRecorder
+import com.riga.voicewaze.domain.landmark.LandmarkEntry
 import com.riga.voicewaze.domain.landmark.LandmarkMatcher
 import com.riga.voicewaze.domain.matcher.AddressSuggestion
 import com.riga.voicewaze.domain.matcher.StreetMatcher
@@ -70,6 +75,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rvSuggestions: RecyclerView
 
     private lateinit var streetMatcher: StreetMatcher
+    private lateinit var landmarkRepository: LandmarkRepository
     private lateinit var landmarkMatcher: LandmarkMatcher
     private lateinit var wavRecorder: WavRecorder
     private lateinit var cloudTranscriber: GoogleCloudLatvianTranscriber
@@ -182,7 +188,8 @@ class MainActivity : AppCompatActivity() {
 
         val streetRepository = StreetRepository(this)
         streetMatcher = StreetMatcher(streetRepository)
-        landmarkMatcher = LandmarkMatcher()
+        landmarkRepository = LandmarkRepository(this)
+        landmarkMatcher = LandmarkMatcher(landmarkRepository)
         wavRecorder = WavRecorder(cacheDir)
         cloudTranscriber = GoogleCloudLatvianTranscriber()
         houseValidator = NominatimHouseValidator()
@@ -209,6 +216,14 @@ class MainActivity : AppCompatActivity() {
             autoOpenAfterVoice = true
             clearSuggestions()
             ensureMicPermissionAndStart()
+        }
+
+        btnMicRu.setOnLongClickListener {
+            if (isLatvianCloudRecording) {
+                safeStopLatvianRecording()
+            }
+            showLandmarkEditorDialog()
+            true
         }
 
         btnMicLv.setOnClickListener {
@@ -702,6 +717,120 @@ class MainActivity : AppCompatActivity() {
         etInput.setSelection(address.length)
         suppressTextWatcher = false
         handleSearch(address, false)
+    }
+
+    private fun showLandmarkEditorDialog() {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_landmark_editor, null)
+        val rvLandmarks = dialogView.findViewById<RecyclerView>(R.id.rvLandmarks)
+        val btnAddLandmark = dialogView.findViewById<Button>(R.id.btnAddLandmark)
+        val btnCloseEditor = dialogView.findViewById<Button>(R.id.btnCloseEditor)
+
+        lateinit var adapter: LandmarkEditorAdapter
+        adapter = LandmarkEditorAdapter(
+            onEditClicked = { entry ->
+                showLandmarkEditDialog(entry) {
+                    adapter.submitList(landmarkRepository.getAll())
+                }
+            },
+            onDeleteClicked = { entry ->
+                confirmDeleteLandmark(entry) {
+                    adapter.submitList(landmarkRepository.getAll())
+                }
+            }
+        )
+
+        rvLandmarks.layoutManager = LinearLayoutManager(this)
+        if (rvLandmarks.itemDecorationCount == 0) {
+            rvLandmarks.addItemDecoration(
+                DividerItemDecoration(this, DividerItemDecoration.VERTICAL)
+            )
+        }
+        rvLandmarks.adapter = adapter
+        adapter.submitList(landmarkRepository.getAll())
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Редактор объектов")
+            .setView(dialogView)
+            .create()
+
+        btnAddLandmark.setOnClickListener {
+            showLandmarkEditDialog(entry = null) {
+                adapter.submitList(landmarkRepository.getAll())
+            }
+        }
+
+        btnCloseEditor.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        dialog.show()
+    }
+
+    private fun showLandmarkEditDialog(
+        entry: LandmarkEntry?,
+        onSaved: () -> Unit
+    ) {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 24, 48, 8)
+        }
+
+        val etName = EditText(this).apply {
+            hint = "Название объекта"
+            setText(entry?.name.orEmpty())
+        }
+
+        val etAddress = EditText(this).apply {
+            hint = "Адрес объекта"
+            setText(entry?.address.orEmpty())
+            minLines = 2
+        }
+
+        container.addView(etName)
+        container.addView(etAddress)
+
+        val title = if (entry == null) "Добавить объект" else "Изменить объект"
+
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(container)
+            .setNegativeButton("Отмена", null)
+            .setPositiveButton("Сохранить", null)
+            .create()
+            .also { dialog ->
+                dialog.setOnShowListener {
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                        val name = etName.text.toString().trim()
+                        val address = etAddress.text.toString().trim()
+
+                        try {
+                            landmarkRepository.upsert(entry?.id, name, address)
+                            onSaved()
+                            dialog.dismiss()
+                            toast("Список объектов сохранён")
+                        } catch (e: IllegalArgumentException) {
+                            toast(e.message ?: "Не удалось сохранить объект")
+                        }
+                    }
+                }
+                dialog.show()
+            }
+    }
+
+    private fun confirmDeleteLandmark(
+        entry: LandmarkEntry,
+        onDeleted: () -> Unit
+    ) {
+        AlertDialog.Builder(this)
+            .setTitle("Удалить объект")
+            .setMessage("Удалить объект \"${entry.name}\"?")
+            .setNegativeButton("Нет", null)
+            .setPositiveButton("Удалить") { _, _ ->
+                landmarkRepository.delete(entry.id)
+                onDeleted()
+                toast("Объект удалён")
+            }
+            .show()
     }
 
     private fun startGoogleVoiceRecognition() {
