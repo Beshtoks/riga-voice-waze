@@ -71,15 +71,15 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var streetMatcher: StreetMatcher
     private lateinit var landmarkMatcher: LandmarkMatcher
-    private lateinit var suggestionAdapter: SuggestionAdapter
     private lateinit var wavRecorder: WavRecorder
     private lateinit var cloudTranscriber: GoogleCloudLatvianTranscriber
     private lateinit var houseValidator: NominatimHouseValidator
     private lateinit var addressPreprocessor: AddressPreprocessor
+    private lateinit var suggestionAdapter: SuggestionAdapter
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
     private val uiHandler = Handler(Looper.getMainLooper())
-    private val toneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85)
+    private val toneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 80)
 
     private var currentMode: VoiceMode = VoiceMode.ADDRESS_LV
     private var autoOpenAfterVoice: Boolean = false
@@ -89,7 +89,7 @@ class MainActivity : AppCompatActivity() {
     private var lastHouseValidationResult: HouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
     private var isLatvianCloudRecording: Boolean = false
     private var isRecordingDotVisible: Boolean = true
-    private var lastProcessedQuery: ProcessedAddressQuery = ProcessedAddressQuery("", "", "", null, "Rīga")
+    private var lastProcessedQuery: ProcessedAddressQuery = ProcessedAddressQuery("", "", "", null, "Rīga", false, null)
 
     private var recordingDotView: TextView? = null
 
@@ -363,12 +363,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopRecordingIndicator() {
         uiHandler.removeCallbacks(recordingBlinkRunnable)
-        isRecordingDotVisible = true
         recordingDotView?.visibility = View.GONE
+        isRecordingDotVisible = true
     }
 
     private fun ensureMicPermissionAndStart() {
-        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
 
         if (granted) {
             when (currentMode) {
@@ -378,6 +381,34 @@ class MainActivity : AppCompatActivity() {
         } else {
             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
+    }
+
+    private fun clearDiagnosticLines() {
+        tvPrepared.text = ""
+        tvValidation.text = ""
+        tvCoords.text = ""
+    }
+
+    private fun clearSuggestions() {
+        suggestionAdapter.submitList(emptyList())
+    }
+
+    private fun setBusyState() {
+        btnMicRu.isEnabled = false
+        btnMicLv.isEnabled = false
+        btnSearch.isEnabled = false
+        btnReset.isEnabled = false
+        btnWaze.isEnabled = false
+        etInput.isEnabled = false
+    }
+
+    private fun finishBusyState() {
+        btnMicRu.isEnabled = true
+        btnMicLv.isEnabled = true
+        btnSearch.isEnabled = true
+        btnReset.isEnabled = true
+        btnWaze.isEnabled = true
+        etInput.isEnabled = true
     }
 
     private fun handleSearch(text: String, autoOpen: Boolean) {
@@ -416,7 +447,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun processAddressSearch(input: String, autoOpen: Boolean) {
         val processed = addressPreprocessor.process(input)
-        val matcherInput = processed.matcherInput.ifBlank { input }
+        if (!processed.isValid) {
+            runOnUiThread {
+                finishBusyState()
+                clearSuggestions()
+                clearDiagnosticLines()
+                lastProcessedQuery = processed
+                lastAddress = ""
+                lastAddressNeedsHouseValidation = false
+                lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.NOT_FOUND, processed.errorMessage ?: "Адрес введён некорректно")
+                tvResult.text = processed.errorMessage ?: "Адрес введён некорректно"
+                autoOpenAfterVoice = false
+            }
+            return
+        }
+
+        val matcherInput = processed.matcherInput
 
         val matches = streetMatcher.findTopMatchesDetailed(
             input = matcherInput,
@@ -487,23 +533,23 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             finishBusyState()
             clearDiagnosticLines()
-
-            if (accepted) {
-                lastAddress = match.address
-                lastAddressNeedsHouseValidation = false
-                lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
-                tvResult.text = match.address
-                applyValidationUi(lastHouseValidationResult)
-
-                if (autoOpen) {
-                    openResolvedDestination(lastHouseValidationResult, lastAddress)
-                }
+            lastAddress = if (accepted) match.address else ""
+            lastAddressNeedsHouseValidation = false
+            lastHouseValidationResult = if (accepted) {
+                HouseValidationResult(HouseValidationStatus.VALID)
             } else {
-                lastAddress = ""
-                lastAddressNeedsHouseValidation = false
-                lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.NOT_FOUND, "Объект не найден")
-                tvResult.text = "Объект не найден"
-                applyValidationUi(lastHouseValidationResult)
+                HouseValidationResult(HouseValidationStatus.NOT_FOUND, "Объект не найден")
+            }
+
+            tvResult.text = if (accepted) {
+                match.address
+            } else {
+                "Объект не найден"
+            }
+            applyValidationUi(lastHouseValidationResult)
+
+            if (autoOpen && accepted) {
+                openResolvedDestination(lastHouseValidationResult, lastAddress)
             }
 
             autoOpenAfterVoice = false
@@ -514,7 +560,20 @@ class MainActivity : AppCompatActivity() {
         executor.execute {
             try {
                 val processed = addressPreprocessor.process(input)
-                val matcherInput = processed.matcherInput.ifBlank { input }
+                if (!processed.isValid) {
+                    runOnUiThread {
+                        clearSuggestions()
+                        clearDiagnosticLines()
+                        lastProcessedQuery = processed
+                        lastAddress = ""
+                        lastAddressNeedsHouseValidation = false
+                        lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.NOT_FOUND, processed.errorMessage ?: "Адрес введён некорректно")
+                        tvResult.text = processed.errorMessage ?: "Адрес введён некорректно"
+                    }
+                    return@execute
+                }
+
+                val matcherInput = processed.matcherInput
 
                 val matches = streetMatcher.findTopMatchesDetailed(
                     input = matcherInput,
@@ -545,7 +604,7 @@ class MainActivity : AppCompatActivity() {
                 val canonicalHouse = validationResult.canonicalHouseNumber ?: processed.houseNumber
                 val bestAddress = buildFullAddress(bestStreet, canonicalHouse, bestCity)
 
-                val preparedSuggestions = matches.map { suggestion ->
+                val preparedSuggestions = matches.drop(1).map { suggestion ->
                     val street = normalizeStreetForDisplay(suggestion.street)
                     val city = if (suggestion.city.isBlank()) processed.city else suggestion.city
                     suggestion.copy(
@@ -564,7 +623,7 @@ class MainActivity : AppCompatActivity() {
                     tvResult.text = "$bestAddress, Latvija"
                     applyValidationUi(validationResult)
 
-                    suggestionAdapter.submitList(preparedSuggestions.drop(1))
+                    suggestionAdapter.submitList(preparedSuggestions)
                 }
             } catch (_: Exception) {
                 runOnUiThread {
@@ -628,52 +687,32 @@ class MainActivity : AppCompatActivity() {
         suppressTextWatcher = true
         etInput.setText("")
         suppressTextWatcher = false
+        clearDiagnosticLines()
+        clearSuggestions()
         lastAddress = ""
         lastAddressNeedsHouseValidation = false
         lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
-        tvResult.text = ""
-        clearDiagnosticLines()
-        clearSuggestions()
-        setVoiceMode(currentMode)
+        autoOpenAfterVoice = false
+        tvResult.text = if (currentMode == VoiceMode.ADDRESS_LV) "Введите адрес" else "Введите объект"
     }
 
-    private fun clearDiagnosticLines() {
-        tvPrepared.text = ""
-        tvValidation.text = ""
-        tvCoords.text = ""
-    }
-
-    private fun clearSuggestions() {
-        suggestionAdapter.submitList(emptyList())
-    }
-
-    private fun setBusyState() {
-        btnReset.isEnabled = false
-        btnSearch.isEnabled = false
-        btnMicRu.isEnabled = false
-        btnMicLv.isEnabled = false
-        btnWaze.isEnabled = false
-    }
-
-    private fun finishBusyState() {
-        btnReset.isEnabled = true
-        btnSearch.isEnabled = true
-        btnMicRu.isEnabled = true
-        btnMicLv.isEnabled = true
-        btnWaze.isEnabled = true
+    private fun onSuggestionCommitted(address: String) {
+        suppressTextWatcher = true
+        etInput.setText(address)
+        etInput.setSelection(address.length)
+        suppressTextWatcher = false
+        handleSearch(address, false)
     }
 
     private fun startGoogleVoiceRecognition() {
         try {
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(
+                    RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                )
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "ru-RU")
                 putExtra(RecognizerIntent.EXTRA_PROMPT, "Скажи объект")
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 3000L)
             }
 
             speechLauncher.launch(intent)
@@ -860,7 +899,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun validateHouseIfNeeded(street: String, houseNumber: String?, city: String): HouseValidationResult {
         if (houseNumber.isNullOrBlank()) {
-            return HouseValidationResult(HouseValidationStatus.VALID)
+            return HouseValidationResult(
+                HouseValidationStatus.NOT_FOUND,
+                "Укажи номер дома"
+            )
         }
 
         return houseValidator.validateHouse(street = street, houseNumber = houseNumber, city = city)

@@ -7,7 +7,9 @@ data class ProcessedAddressQuery(
     val matcherInput: String,
     val displayText: String,
     val houseNumber: String?,
-    val city: String
+    val city: String,
+    val isValid: Boolean,
+    val errorMessage: String?
 )
 
 class AddressPreprocessor {
@@ -40,15 +42,12 @@ class AddressPreprocessor {
             .toMutableList()
 
         val explicitCity = extractExplicitCityFromEnd(tokens)
-        val city = explicitCity ?: "Rīga"
 
         if (tokens.isEmpty()) {
-            return ProcessedAddressQuery(
+            return invalidQuery(
                 rawInput = cleanedOriginal,
-                matcherInput = "",
-                displayText = "",
-                houseNumber = null,
-                city = city
+                city = explicitCity ?: "Rīga",
+                message = "Укажи номер дома"
             )
         }
 
@@ -58,17 +57,41 @@ class AddressPreprocessor {
             parseStreetFirst(tokens)
         }
 
-        if (parsed.streetBase.isBlank()) {
-            return ProcessedAddressQuery(
+        val city = parsed.cityOverride ?: explicitCity ?: "Rīga"
+
+        if (!parsed.isValid) {
+            return invalidQuery(
                 rawInput = cleanedOriginal,
-                matcherInput = cleanedOriginal,
-                displayText = cleanedOriginal,
-                houseNumber = parsed.houseNumber,
-                city = city
+                city = city,
+                message = parsed.errorMessage ?: "Адрес введён некорректно"
+            )
+        }
+
+        if (parsed.houseNumber.isNullOrBlank()) {
+            return invalidQuery(
+                rawInput = cleanedOriginal,
+                city = city,
+                message = "Укажи номер дома"
+            )
+        }
+
+        if (parsed.streetBase.isBlank()) {
+            return invalidQuery(
+                rawInput = cleanedOriginal,
+                city = city,
+                message = "Укажи улицу"
             )
         }
 
         val streetName = buildStreetName(parsed.streetBase)
+        if (streetName.isBlank()) {
+            return invalidQuery(
+                rawInput = cleanedOriginal,
+                city = city,
+                message = "Укажи улицу"
+            )
+        }
+
         val housePart = buildHousePart(parsed.houseNumber, parsed.corpusNumber)
 
         val displayText = buildString {
@@ -81,26 +104,20 @@ class AddressPreprocessor {
             append(city)
         }.trim()
 
-        val matcherInput = buildString {
-            append(streetName)
-            if (housePart.isNotBlank()) {
-                append(" ")
-                append(housePart)
-            }
-        }.trim()
-
-        val finalHouseNumber = when {
-            parsed.houseNumber.isNullOrBlank() -> null
-            parsed.corpusNumber.isNullOrBlank() -> parsed.houseNumber
-            else -> "${parsed.houseNumber} k-${parsed.corpusNumber}"
+        val finalHouseNumber = if (parsed.corpusNumber.isNullOrBlank()) {
+            parsed.houseNumber
+        } else {
+            "${parsed.houseNumber} k-${parsed.corpusNumber}"
         }
 
         return ProcessedAddressQuery(
             rawInput = cleanedOriginal,
-            matcherInput = matcherInput,
+            matcherInput = streetName,
             displayText = displayText,
             houseNumber = finalHouseNumber,
-            city = city
+            city = city,
+            isValid = true,
+            errorMessage = null
         )
     }
 
@@ -110,7 +127,25 @@ class AddressPreprocessor {
             matcherInput = "",
             displayText = "",
             houseNumber = null,
-            city = "Rīga"
+            city = "Rīga",
+            isValid = false,
+            errorMessage = null
+        )
+    }
+
+    private fun invalidQuery(
+        rawInput: String,
+        city: String,
+        message: String
+    ): ProcessedAddressQuery {
+        return ProcessedAddressQuery(
+            rawInput = rawInput,
+            matcherInput = "",
+            displayText = "",
+            houseNumber = null,
+            city = city,
+            isValid = false,
+            errorMessage = message
         )
     }
 
@@ -132,8 +167,7 @@ class AddressPreprocessor {
     private fun looksLikeExplicitCity(original: String, normalized: String): Boolean {
         if (normalized.isBlank()) return false
         if (normalized.any { it.isDigit() }) return false
-        if (isStreetTypeToken(normalized)) return false
-        if (isCorpusKeyword(normalized.lowercase(Locale.ROOT))) return false
+        if (containsCorpusRoot(normalized.lowercase(Locale.ROOT))) return false
 
         val first = original.trim().firstOrNull() ?: return false
         return first.isUpperCase()
@@ -149,10 +183,12 @@ class AddressPreprocessor {
         val streetTokens = mutableListOf<String>()
         var houseNumber: String? = null
         var corpusNumber: String? = null
+        var cityOverride: String? = null
 
         var i = 0
         while (i < tokens.size) {
             val token = normalizeToken(tokens[i])
+            val lowered = token.lowercase(Locale.ROOT)
 
             if (token.isBlank()) {
                 i++
@@ -163,34 +199,35 @@ class AddressPreprocessor {
                 houseNumber = token
                 i++
 
-                val corpus = tryParseCorpus(tokens, i)
-                if (corpus != null) {
-                    corpusNumber = corpus.number
-                    i = corpus.nextIndex
+                val tail = parseTailAfterHouse(tokens, i)
+                if (tail.invalid) {
+                    return ParsedAddress.invalid("После слова корпус должна идти цифра")
                 }
+                corpusNumber = tail.corpusNumber
+                cityOverride = tail.cityOverride
+                i = tail.nextIndex
                 continue
             }
 
-            if (houseNumber != null) {
-                val corpus = tryParseCorpus(tokens, i)
-                if (corpus != null) {
-                    corpusNumber = corpus.number
-                    i = corpus.nextIndex
-                    continue
+            if (houseNumber == null) {
+                if (containsCorpusRoot(lowered)) {
+                    return ParsedAddress.invalid("После слова корпус должна идти цифра")
                 }
-            }
-
-            if (!shouldSkipToken(token) && !isStreetTypeToken(token)) {
-                streetTokens.add(token)
+                if (!shouldSkipToken(token)) {
+                    streetTokens.add(token)
+                }
+                i++
+                continue
             }
 
             i++
         }
 
-        return ParsedAddress(
+        return ParsedAddress.valid(
             streetBase = normalizeStreetBase(streetTokens),
             houseNumber = houseNumber,
-            corpusNumber = corpusNumber
+            corpusNumber = corpusNumber,
+            cityOverride = cityOverride
         )
     }
 
@@ -200,9 +237,13 @@ class AddressPreprocessor {
         val houseNumber = normalizeHouseNumber(tokens.getOrNull(i).orEmpty())
         i++
 
-        var corpusNumber: String? = null
         val initialCorpus = tryParseCorpus(tokens, i)
-        if (initialCorpus != null) {
+        if (initialCorpus.invalid) {
+            return ParsedAddress.invalid("После слова корпус должна идти цифра")
+        }
+
+        var corpusNumber: String? = null
+        if (initialCorpus.number != null) {
             corpusNumber = initialCorpus.number
             i = initialCorpus.nextIndex
         }
@@ -210,6 +251,7 @@ class AddressPreprocessor {
         val streetTokens = mutableListOf<String>()
         while (i < tokens.size) {
             val token = normalizeToken(tokens[i])
+            val lowered = token.lowercase(Locale.ROOT)
 
             if (token.isBlank()) {
                 i++
@@ -217,23 +259,80 @@ class AddressPreprocessor {
             }
 
             val laterCorpus = tryParseCorpus(tokens, i)
-            if (laterCorpus != null) {
+            if (laterCorpus.invalid) {
+                return ParsedAddress.invalid("После слова корпус должна идти цифра")
+            }
+            if (laterCorpus.number != null) {
                 corpusNumber = laterCorpus.number
                 i = laterCorpus.nextIndex
                 continue
             }
 
-            if (!shouldSkipToken(token) && !isStreetTypeToken(token)) {
+            if (containsCorpusRoot(lowered)) {
+                return ParsedAddress.invalid("После слова корпус должна идти цифра")
+            }
+
+            if (!shouldSkipToken(token)) {
                 streetTokens.add(token)
             }
 
             i++
         }
 
-        return ParsedAddress(
+        return ParsedAddress.valid(
             streetBase = normalizeStreetBase(streetTokens),
             houseNumber = houseNumber.ifBlank { null },
-            corpusNumber = corpusNumber
+            corpusNumber = corpusNumber,
+            cityOverride = null
+        )
+    }
+
+    private fun parseTailAfterHouse(tokens: List<String>, startIndex: Int): TailParseResult {
+        if (startIndex >= tokens.size) {
+            return TailParseResult.none(startIndex)
+        }
+
+        val normalizedTail = tokens
+            .subList(startIndex, tokens.size)
+            .map { normalizeToken(it) }
+            .filter { it.isNotBlank() }
+
+        if (normalizedTail.isEmpty()) {
+            return TailParseResult.none(tokens.size)
+        }
+
+        if (containsCorpusRoot(normalizedTail.first().lowercase(Locale.ROOT))) {
+            if (normalizedTail.size < 2) {
+                return TailParseResult.invalid(tokens.size)
+            }
+
+            val corpusNumber = extractEmbeddedNumber(normalizedTail[1])
+            if (corpusNumber != null) {
+                return TailParseResult.valid(
+                    corpusNumber = corpusNumber,
+                    cityOverride = null,
+                    nextIndex = tokens.size
+                )
+            }
+
+            return TailParseResult.invalid(tokens.size)
+        }
+
+        for (index in normalizedTail.indices) {
+            val extractedNumber = extractEmbeddedNumber(normalizedTail[index])
+            if (extractedNumber != null) {
+                return TailParseResult.valid(
+                    corpusNumber = extractedNumber,
+                    cityOverride = null,
+                    nextIndex = tokens.size
+                )
+            }
+        }
+
+        return TailParseResult.valid(
+            corpusNumber = null,
+            cityOverride = capitalizeLatvianWords(normalizedTail.joinToString(" ")),
+            nextIndex = tokens.size
         )
     }
 
@@ -241,7 +340,39 @@ class AddressPreprocessor {
         val base = streetBase.trim()
         if (base.isBlank()) return ""
 
-        val withType = if (base.endsWith(" iela", ignoreCase = true)) {
+        val lowered = base.lowercase(Locale.ROOT)
+        val hasKnownStreetType = lowered.contains(" iela") ||
+            lowered.endsWith("iela") ||
+            lowered.contains(" gatve") ||
+            lowered.endsWith("gatve") ||
+            lowered.contains(" prospekts") ||
+            lowered.endsWith("prospekts") ||
+            lowered.contains(" aleja") ||
+            lowered.endsWith("aleja") ||
+            lowered.contains(" bulvāris") ||
+            lowered.endsWith("bulvāris") ||
+            lowered.contains(" laukums") ||
+            lowered.endsWith("laukums") ||
+            lowered.contains(" krastmala") ||
+            lowered.endsWith("krastmala") ||
+            lowered.contains(" dambis") ||
+            lowered.endsWith("dambis") ||
+            lowered.contains(" ceļš") ||
+            lowered.endsWith("ceļš") ||
+            lowered.contains(" līnija") ||
+            lowered.endsWith("līnija") ||
+            lowered.contains(" šķērslīnija") ||
+            lowered.endsWith("šķērslīnija") ||
+            lowered.contains(" gāte") ||
+            lowered.endsWith("gāte") ||
+            lowered.contains(" sēta") ||
+            lowered.endsWith("sēta") ||
+            lowered.contains(" skvērs") ||
+            lowered.endsWith("skvērs") ||
+            lowered.contains(" taka") ||
+            lowered.endsWith("taka")
+
+        val withType = if (hasKnownStreetType) {
             base
         } else {
             "$base iela"
@@ -290,11 +421,18 @@ class AddressPreprocessor {
             Regex("^\\d+[/-]\\d+[A-Za-zА-Яа-я]?$").matches(token)
     }
 
-    private fun tryParseCorpus(tokens: List<String>, startIndex: Int): CorpusParseResult? {
-        if (startIndex >= tokens.size) return null
+    private fun extractEmbeddedNumber(token: String): String? {
+        if (token.isBlank()) return null
+
+        val match = Regex("(\\d+[A-Za-zА-Яа-я]?)").find(token) ?: return null
+        return match.groupValues[1].takeIf { it.isNotBlank() }
+    }
+
+    private fun tryParseCorpus(tokens: List<String>, startIndex: Int): CorpusParseResult {
+        if (startIndex >= tokens.size) return CorpusParseResult.none(startIndex)
 
         val token = normalizeToken(tokens[startIndex]).lowercase(Locale.ROOT)
-        if (token.isBlank()) return null
+        if (token.isBlank()) return CorpusParseResult.none(startIndex)
 
         if (Regex("^k-?\\d+[A-Za-zА-Яа-я]?$").matches(token)) {
             val number = token
@@ -303,26 +441,28 @@ class AddressPreprocessor {
                 .trim()
 
             if (number.isNotBlank()) {
-                return CorpusParseResult(number = number, nextIndex = startIndex + 1)
+                return CorpusParseResult.valid(number = number, nextIndex = startIndex + 1)
             }
         }
 
-        if (isCorpusKeyword(token) && startIndex + 1 < tokens.size) {
+        if (containsCorpusRoot(token)) {
+            if (startIndex + 1 >= tokens.size) {
+                return CorpusParseResult.invalid(startIndex)
+            }
+
             val next = normalizeToken(tokens[startIndex + 1])
             if (isHouseNumberToken(next)) {
-                return CorpusParseResult(number = next, nextIndex = startIndex + 2)
+                return CorpusParseResult.valid(number = next, nextIndex = startIndex + 2)
             }
+
+            return CorpusParseResult.invalid(startIndex)
         }
 
-        return null
+        return CorpusParseResult.none(startIndex)
     }
 
-    private fun isCorpusKeyword(token: String): Boolean {
-        return token == "korpuss" || token == "korpus" || token == "k"
-    }
-
-    private fun isStreetTypeToken(token: String): Boolean {
-        return token.equals("iela", ignoreCase = true)
+    private fun containsCorpusRoot(token: String): Boolean {
+        return token == "k" || token.contains("korp") || token.contains("корп")
     }
 
     private fun shouldSkipToken(token: String): Boolean {
@@ -349,11 +489,71 @@ class AddressPreprocessor {
     private data class ParsedAddress(
         val streetBase: String,
         val houseNumber: String?,
-        val corpusNumber: String?
-    )
+        val corpusNumber: String?,
+        val cityOverride: String?,
+        val isValid: Boolean,
+        val errorMessage: String?
+    ) {
+        companion object {
+            fun valid(streetBase: String, houseNumber: String?, corpusNumber: String?, cityOverride: String?) = ParsedAddress(
+                streetBase = streetBase,
+                houseNumber = houseNumber,
+                corpusNumber = corpusNumber,
+                cityOverride = cityOverride,
+                isValid = true,
+                errorMessage = null
+            )
+
+            fun invalid(message: String) = ParsedAddress(
+                streetBase = "",
+                houseNumber = null,
+                corpusNumber = null,
+                cityOverride = null,
+                isValid = false,
+                errorMessage = message
+            )
+        }
+    }
+
+    private data class TailParseResult(
+        val corpusNumber: String?,
+        val cityOverride: String?,
+        val nextIndex: Int,
+        val invalid: Boolean
+    ) {
+        companion object {
+            fun none(nextIndex: Int) = TailParseResult(
+                corpusNumber = null,
+                cityOverride = null,
+                nextIndex = nextIndex,
+                invalid = false
+            )
+
+            fun valid(corpusNumber: String?, cityOverride: String?, nextIndex: Int) = TailParseResult(
+                corpusNumber = corpusNumber,
+                cityOverride = cityOverride,
+                nextIndex = nextIndex,
+                invalid = false
+            )
+
+            fun invalid(nextIndex: Int) = TailParseResult(
+                corpusNumber = null,
+                cityOverride = null,
+                nextIndex = nextIndex,
+                invalid = true
+            )
+        }
+    }
 
     private data class CorpusParseResult(
-        val number: String,
-        val nextIndex: Int
-    )
+        val number: String?,
+        val nextIndex: Int,
+        val invalid: Boolean
+    ) {
+        companion object {
+            fun none(nextIndex: Int) = CorpusParseResult(number = null, nextIndex = nextIndex, invalid = false)
+            fun valid(number: String, nextIndex: Int) = CorpusParseResult(number = number, nextIndex = nextIndex, invalid = false)
+            fun invalid(nextIndex: Int) = CorpusParseResult(number = null, nextIndex = nextIndex, invalid = true)
+        }
+    }
 }

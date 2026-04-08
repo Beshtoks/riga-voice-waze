@@ -206,52 +206,59 @@ class StreetMatcher(
         val queryPhrase = queryStreetTokens.joinToString(" ")
         val candidatePhrase = candidateStreetTokens.joinToString(" ")
 
-        val phraseSimilarity = similarityPercent(queryPhrase, candidatePhrase)
-        percent += (phraseSimilarity * 0.35).toInt()
+        val exactWordCount = countExactWordMatches(queryStreetTokens, candidateStreetTokens)
+        val prefixWordCount = countPrefixWordMatches(queryStreetTokens, candidateStreetTokens)
+        val containsOnlyCount = countContainsOnlyMatches(queryStreetTokens, candidateStreetTokens)
 
-        val firstQuery = queryStreetTokens.first()
-        val firstCandidate = candidateStreetTokens.first()
-        val firstSimilarity = similarityPercent(firstQuery, firstCandidate)
         when {
-            firstSimilarity >= 98 -> percent += 35
-            firstSimilarity >= 95 -> percent += 30
-            firstSimilarity >= 90 -> percent += 24
-            firstSimilarity >= 85 -> percent += 18
-            firstSimilarity >= 75 -> percent += 8
-            else -> percent -= 25
+            exactWordCount == queryStreetTokens.size -> percent += 65
+            exactWordCount >= 1 -> percent += 45
         }
 
+        when {
+            prefixWordCount == queryStreetTokens.size -> percent += 45
+            prefixWordCount >= 1 -> percent += 28
+        }
+
+        when {
+            containsOnlyCount == queryStreetTokens.size -> percent += 8
+            containsOnlyCount >= 1 -> percent += 3
+        }
+
+        val phraseSimilarity = similarityPercent(queryPhrase, candidatePhrase)
+        percent += (phraseSimilarity * 0.10).toInt()
+
         var tokenAverage = 0.0
-        var exactMatches = 0
         var strongMatches = 0
         for (queryToken in queryStreetTokens) {
-            val bestTokenPercent = candidateStreetTokens.maxOfOrNull {
-                similarityPercent(queryToken, it)
+            val bestTokenPercent = candidateStreetTokens.maxOfOrNull { candidateToken ->
+                when {
+                    candidateToken == queryToken -> 100
+                    candidateToken.startsWith(queryToken) -> 90
+                    candidateToken.contains(queryToken) -> 65
+                    else -> similarityPercent(queryToken, candidateToken)
+                }
             } ?: 0
+
             tokenAverage += bestTokenPercent.toDouble()
-            if (bestTokenPercent >= 95) exactMatches++
             if (bestTokenPercent >= 85) strongMatches++
         }
 
-        percent += ((tokenAverage / queryStreetTokens.size) * 0.25).toInt()
-
-        val prefixCount = countPrefixMatches(queryStreetTokens, candidateStreetTokens)
-        when {
-            prefixCount == queryStreetTokens.size -> percent += 25
-            prefixCount >= 2 -> percent += 18
-            prefixCount == 1 -> percent += 8
-        }
+        percent += ((tokenAverage / queryStreetTokens.size) * 0.10).toInt()
 
         if (strongMatches == queryStreetTokens.size) {
-            percent += 10
-        } else if (strongMatches >= 2) {
-            percent += 6
+            percent += 8
+        } else if (strongMatches >= 1) {
+            percent += 4
         }
 
-        if (exactMatches == queryStreetTokens.size) {
-            percent += 10
-        } else if (exactMatches >= 2) {
-            percent += 6
+        val streetType = candidateStreetTokens.lastOrNull() ?: ""
+        when (streetType) {
+            "iela" -> percent += 20
+            "gatve" -> percent += 15
+            "prospekts" -> percent += 12
+            "bulvaris", "bulvāris" -> percent += 10
+            "laukums" -> percent += 8
         }
 
         if (parsedInput.houseNumber != null) {
@@ -264,17 +271,49 @@ class StreetMatcher(
         return percent.coerceIn(0, 100)
     }
 
-    private fun countPrefixMatches(
+    private fun countExactWordMatches(
         queryTokens: List<String>,
         candidateTokens: List<String>
     ): Int {
-        val max = minOf(queryTokens.size, candidateTokens.size)
         var count = 0
-        for (i in 0 until max) {
-            if (similarityPercent(queryTokens[i], candidateTokens[i]) >= 90) {
+        for (queryToken in queryTokens) {
+            val matched = candidateTokens.any { candidateToken ->
+                candidateToken == queryToken
+            }
+            if (matched) {
                 count++
-            } else {
-                break
+            }
+        }
+        return count
+    }
+
+    private fun countPrefixWordMatches(
+        queryTokens: List<String>,
+        candidateTokens: List<String>
+    ): Int {
+        var count = 0
+        for (queryToken in queryTokens) {
+            val matched = candidateTokens.any { candidateToken ->
+                candidateToken.startsWith(queryToken)
+            }
+            if (matched) {
+                count++
+            }
+        }
+        return count
+    }
+
+    private fun countContainsOnlyMatches(
+        queryTokens: List<String>,
+        candidateTokens: List<String>
+    ): Int {
+        var count = 0
+        for (queryToken in queryTokens) {
+            val matched = candidateTokens.any { candidateToken ->
+                !candidateToken.startsWith(queryToken) && candidateToken.contains(queryToken)
+            }
+            if (matched) {
+                count++
             }
         }
         return count

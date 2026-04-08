@@ -2,10 +2,6 @@ package com.riga.voicewaze.domain.landmark
 
 class LandmarkMatcher {
 
-    private companion object {
-        private const val MIN_CONFIDENT_MATCH_PERCENT = 60
-    }
-
     private val entries = listOf(
         LandmarkEntry("аэропорт", "Starptautiskā lidosta Rīga, Mārupes novads, Latvija"),
         LandmarkEntry("вокзал", "Stacijas laukums 2, Rīga, Latvija"),
@@ -156,7 +152,7 @@ class LandmarkMatcher {
             name = bestEntry.name,
             address = bestEntry.address,
             matchPercent = bestPercent.coerceAtLeast(0),
-            isConfident = bestPercent >= MIN_CONFIDENT_MATCH_PERCENT
+            isConfident = bestPercent >= 60
         )
     }
 
