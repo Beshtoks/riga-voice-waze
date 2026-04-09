@@ -22,13 +22,14 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.setPadding
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.riga.voicewaze.R
@@ -45,6 +46,7 @@ import com.riga.voicewaze.domain.preprocessor.ProcessedAddressQuery
 import com.riga.voicewaze.domain.validator.HouseValidationResult
 import com.riga.voicewaze.domain.validator.HouseValidationStatus
 import com.riga.voicewaze.domain.validator.NominatimHouseValidator
+import com.riga.voicewaze.ui.map.MapPickerActivity
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -98,6 +100,13 @@ class MainActivity : AppCompatActivity() {
     private var lastProcessedQuery: ProcessedAddressQuery = ProcessedAddressQuery("", "", "", null, "Rīga", false, null)
 
     private var recordingDotView: TextView? = null
+    private var activeLandmarkDialog: AlertDialog? = null
+    private var activeLandmarkSpokenEdit: EditText? = null
+    private var activeLandmarkDisplayEdit: EditText? = null
+    private var activeLandmarkAddressEdit: EditText? = null
+    private var activeLandmarkCoordsText: TextView? = null
+    private var activeLandmarkLatitude: Double? = null
+    private var activeLandmarkLongitude: Double? = null
 
     private val recordingBlinkRunnable = object : Runnable {
         override fun run() {
@@ -146,6 +155,31 @@ class MainActivity : AppCompatActivity() {
                 autoOpenAfterVoice = false
                 tvResult.text = "Ошибка распознавания: ${e.message ?: "unknown"}"
             }
+        }
+
+    private val mapPickerLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode != RESULT_OK) return@registerForActivityResult
+
+            val data = result.data ?: return@registerForActivityResult
+            val latitude = data.getDoubleExtra(MapPickerActivity.EXTRA_LATITUDE, Double.NaN)
+            val longitude = data.getDoubleExtra(MapPickerActivity.EXTRA_LONGITUDE, Double.NaN)
+            val displayName = data.getStringExtra(MapPickerActivity.EXTRA_DISPLAY_NAME).orEmpty()
+            val address = data.getStringExtra(MapPickerActivity.EXTRA_ADDRESS).orEmpty()
+
+            if (latitude.isNaN() || longitude.isNaN()) return@registerForActivityResult
+
+            activeLandmarkLatitude = latitude
+            activeLandmarkLongitude = longitude
+            if (displayName.isNotBlank()) {
+                activeLandmarkDisplayEdit?.setText(displayName)
+                activeLandmarkDisplayEdit?.setSelection(activeLandmarkDisplayEdit?.text?.length ?: 0)
+            }
+            if (address.isNotBlank()) {
+                activeLandmarkAddressEdit?.setText(address)
+                activeLandmarkAddressEdit?.setSelection(activeLandmarkAddressEdit?.text?.length ?: 0)
+            }
+            activeLandmarkCoordsText?.text = formatLandmarkCoords(latitude, longitude)
         }
 
     private val micPermissionLauncher =
@@ -208,6 +242,11 @@ class MainActivity : AppCompatActivity() {
         setVoiceMode(VoiceMode.ADDRESS_LV)
         clearDiagnosticLines()
 
+        btnMicRu.setOnLongClickListener {
+            showLandmarkListDialog()
+            true
+        }
+
         btnMicRu.setOnClickListener {
             if (isLatvianCloudRecording) {
                 safeStopLatvianRecording()
@@ -218,22 +257,14 @@ class MainActivity : AppCompatActivity() {
             ensureMicPermissionAndStart()
         }
 
-        btnMicRu.setOnLongClickListener {
-            if (isLatvianCloudRecording) {
-                safeStopLatvianRecording()
-            }
-            showLandmarkEditorDialog()
-            true
-        }
-
         btnMicLv.setOnClickListener {
-            setVoiceMode(VoiceMode.ADDRESS_LV)
+            switchToAddressModeForManualInput()
             autoOpenAfterVoice = true
             ensureMicPermissionAndStart()
         }
 
         btnReset.setOnClickListener {
-            resetInputAndResults()
+            handleResetButtonTap()
         }
 
         btnSearch.setOnClickListener {
@@ -364,6 +395,24 @@ class MainActivity : AppCompatActivity() {
                 btnMicLv.alpha = 0.65f
                 etInput.hint = "Введите объект"
             }
+        }
+    }
+
+    private fun switchToAddressModeForManualInput() {
+        setVoiceMode(VoiceMode.ADDRESS_LV)
+        autoOpenAfterVoice = false
+        etInput.isEnabled = true
+        etInput.isFocusable = true
+        etInput.isFocusableInTouchMode = true
+        etInput.isCursorVisible = true
+        etInput.requestFocus()
+        clearSuggestions()
+        if (etInput.text?.isBlank() != false) {
+            tvResult.text = "Введите адрес"
+            clearDiagnosticLines()
+            lastAddress = ""
+            lastAddressNeedsHouseValidation = false
+            lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
         }
     }
 
@@ -551,7 +600,11 @@ class MainActivity : AppCompatActivity() {
             lastAddress = if (accepted) match.address else ""
             lastAddressNeedsHouseValidation = false
             lastHouseValidationResult = if (accepted) {
-                HouseValidationResult(HouseValidationStatus.VALID)
+                HouseValidationResult(
+                    status = HouseValidationStatus.VALID,
+                    latitude = match.latitude,
+                    longitude = match.longitude
+                )
             } else {
                 HouseValidationResult(HouseValidationStatus.NOT_FOUND, "Объект не найден")
             }
@@ -697,6 +750,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun handleResetButtonTap() {
+        val wasObjectMode = currentMode == VoiceMode.OBJECT_RU
+        if (wasObjectMode) {
+            setVoiceMode(VoiceMode.ADDRESS_LV)
+        }
+        resetInputAndResults()
+        switchToAddressModeForManualInput()
+    }
+
     private fun resetInputAndResults() {
         safeStopLatvianRecording()
         suppressTextWatcher = true
@@ -717,120 +779,6 @@ class MainActivity : AppCompatActivity() {
         etInput.setSelection(address.length)
         suppressTextWatcher = false
         handleSearch(address, false)
-    }
-
-    private fun showLandmarkEditorDialog() {
-        val dialogView = layoutInflater.inflate(R.layout.dialog_landmark_editor, null)
-        val rvLandmarks = dialogView.findViewById<RecyclerView>(R.id.rvLandmarks)
-        val btnAddLandmark = dialogView.findViewById<Button>(R.id.btnAddLandmark)
-        val btnCloseEditor = dialogView.findViewById<Button>(R.id.btnCloseEditor)
-
-        lateinit var adapter: LandmarkEditorAdapter
-        adapter = LandmarkEditorAdapter(
-            onEditClicked = { entry ->
-                showLandmarkEditDialog(entry) {
-                    adapter.submitList(landmarkRepository.getAll())
-                }
-            },
-            onDeleteClicked = { entry ->
-                confirmDeleteLandmark(entry) {
-                    adapter.submitList(landmarkRepository.getAll())
-                }
-            }
-        )
-
-        rvLandmarks.layoutManager = LinearLayoutManager(this)
-        if (rvLandmarks.itemDecorationCount == 0) {
-            rvLandmarks.addItemDecoration(
-                DividerItemDecoration(this, DividerItemDecoration.VERTICAL)
-            )
-        }
-        rvLandmarks.adapter = adapter
-        adapter.submitList(landmarkRepository.getAll())
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Редактор объектов")
-            .setView(dialogView)
-            .create()
-
-        btnAddLandmark.setOnClickListener {
-            showLandmarkEditDialog(entry = null) {
-                adapter.submitList(landmarkRepository.getAll())
-            }
-        }
-
-        btnCloseEditor.setOnClickListener {
-            dialog.dismiss()
-        }
-
-        dialog.show()
-    }
-
-    private fun showLandmarkEditDialog(
-        entry: LandmarkEntry?,
-        onSaved: () -> Unit
-    ) {
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 24, 48, 8)
-        }
-
-        val etName = EditText(this).apply {
-            hint = "Название объекта"
-            setText(entry?.name.orEmpty())
-        }
-
-        val etAddress = EditText(this).apply {
-            hint = "Адрес объекта"
-            setText(entry?.address.orEmpty())
-            minLines = 2
-        }
-
-        container.addView(etName)
-        container.addView(etAddress)
-
-        val title = if (entry == null) "Добавить объект" else "Изменить объект"
-
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setView(container)
-            .setNegativeButton("Отмена", null)
-            .setPositiveButton("Сохранить", null)
-            .create()
-            .also { dialog ->
-                dialog.setOnShowListener {
-                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                        val name = etName.text.toString().trim()
-                        val address = etAddress.text.toString().trim()
-
-                        try {
-                            landmarkRepository.upsert(entry?.id, name, address)
-                            onSaved()
-                            dialog.dismiss()
-                            toast("Список объектов сохранён")
-                        } catch (e: IllegalArgumentException) {
-                            toast(e.message ?: "Не удалось сохранить объект")
-                        }
-                    }
-                }
-                dialog.show()
-            }
-    }
-
-    private fun confirmDeleteLandmark(
-        entry: LandmarkEntry,
-        onDeleted: () -> Unit
-    ) {
-        AlertDialog.Builder(this)
-            .setTitle("Удалить объект")
-            .setMessage("Удалить объект \"${entry.name}\"?")
-            .setNegativeButton("Нет", null)
-            .setPositiveButton("Удалить") { _, _ ->
-                landmarkRepository.delete(entry.id)
-                onDeleted()
-                toast("Объект удалён")
-            }
-            .show()
     }
 
     private fun startGoogleVoiceRecognition() {
@@ -1114,6 +1062,195 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {
             toast("Не удалось открыть Waze")
         }
+    }
+
+    private fun showLandmarkListDialog() {
+        val landmarks = landmarkRepository.getAll()
+        val items = if (landmarks.isEmpty()) {
+            arrayOf("Список объектов пуст")
+        } else {
+            landmarks.map { "${it.spokenPhrase} → ${it.displayName}" }.toTypedArray()
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Редактор объектов")
+            .setItems(items) { dialog, which ->
+                dialog.dismiss()
+                if (landmarks.isNotEmpty()) {
+                    showLandmarkEditDialog(landmarks[which])
+                }
+            }
+            .setPositiveButton("Добавить") { dialog, _ ->
+                dialog.dismiss()
+                showLandmarkEditDialog(null)
+            }
+            .setNegativeButton("Закрыть", null)
+            .show()
+    }
+
+    private fun showLandmarkEditDialog(existing: LandmarkEntry?) {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16))
+        }
+
+        val spokenEdit = EditText(this).apply {
+            hint = "Что говорю"
+            setText(existing?.spokenPhrase.orEmpty())
+        }
+        val displayEdit = EditText(this).apply {
+            hint = "Название объекта"
+            setText(existing?.displayName.orEmpty())
+        }
+        val addressEdit = EditText(this).apply {
+            hint = "Адрес объекта"
+            setText(existing?.address.orEmpty())
+            minLines = 2
+        }
+        val coordsText = TextView(this).apply {
+            setTextColor(Color.parseColor("#B0BEC5"))
+            textSize = 15f
+            text = if (existing?.latitude != null && existing.longitude != null) {
+                formatLandmarkCoords(existing.latitude, existing.longitude)
+            } else {
+                "Координаты не выбраны"
+            }
+        }
+        val mapButton = Button(this).apply {
+            text = "Выбрать на карте"
+            setOnClickListener {
+                activeLandmarkSpokenEdit = spokenEdit
+                activeLandmarkDisplayEdit = displayEdit
+                activeLandmarkAddressEdit = addressEdit
+                activeLandmarkCoordsText = coordsText
+                activeLandmarkLatitude = existing?.latitude
+                activeLandmarkLongitude = existing?.longitude
+                val intent = Intent(this@MainActivity, MapPickerActivity::class.java)
+                if (activeLandmarkLatitude != null && activeLandmarkLongitude != null) {
+                    intent.putExtra(MapPickerActivity.EXTRA_INITIAL_LATITUDE, activeLandmarkLatitude!!)
+                    intent.putExtra(MapPickerActivity.EXTRA_INITIAL_LONGITUDE, activeLandmarkLongitude!!)
+                }
+                mapPickerLauncher.launch(intent)
+            }
+        }
+
+        container.addView(spokenEdit)
+        addDialogSpacing(container)
+        container.addView(displayEdit)
+        addDialogSpacing(container)
+        container.addView(addressEdit)
+        addDialogSpacing(container)
+        container.addView(coordsText)
+        addDialogSpacing(container)
+        container.addView(mapButton)
+
+        activeLandmarkLatitude = existing?.latitude
+        activeLandmarkLongitude = existing?.longitude
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(if (existing == null) "Добавить объект" else "Изменить объект")
+            .setView(ScrollView(this).apply { addView(container) })
+            .setPositiveButton("Сохранить", null)
+            .setNegativeButton("Отмена", null)
+            .apply {
+                if (existing != null) {
+                    setNeutralButton("Удалить", null)
+                }
+            }
+            .create()
+
+        activeLandmarkDialog = dialog
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val spokenPhrase = spokenEdit.text.toString().trim()
+                val displayName = displayEdit.text.toString().trim()
+                val address = addressEdit.text.toString().trim()
+                val latitude = activeLandmarkLatitude
+                val longitude = activeLandmarkLongitude
+
+                when {
+                    spokenPhrase.isBlank() -> {
+                        spokenEdit.error = "Укажи фразу"
+                    }
+                    displayName.isBlank() -> {
+                        displayEdit.error = "Укажи название"
+                    }
+                    address.isBlank() -> {
+                        addressEdit.error = "Укажи адрес"
+                    }
+                    latitude == null || longitude == null -> {
+                        toast("Сначала выбери точку на карте")
+                    }
+                    landmarkRepository.hasDuplicateSpokenPhrase(spokenPhrase, existing?.id) -> {
+                        spokenEdit.error = "Такая фраза уже существует"
+                    }
+                    else -> {
+                        landmarkRepository.save(
+                            LandmarkEntry(
+                                id = existing?.id ?: landmarkRepository.nextId(),
+                                spokenPhrase = spokenPhrase,
+                                displayName = displayName,
+                                address = address,
+                                latitude = latitude,
+                                longitude = longitude
+                            )
+                        )
+                        reloadLandmarkMatcher()
+                        dialog.dismiss()
+                        showLandmarkListDialog()
+                    }
+                }
+            }
+
+            if (existing != null) {
+                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                    landmarkRepository.delete(existing.id)
+                    reloadLandmarkMatcher()
+                    dialog.dismiss()
+                    showLandmarkListDialog()
+                }
+            }
+        }
+
+        dialog.setOnDismissListener {
+            activeLandmarkDialog = null
+            activeLandmarkSpokenEdit = null
+            activeLandmarkDisplayEdit = null
+            activeLandmarkAddressEdit = null
+            activeLandmarkCoordsText = null
+            activeLandmarkLatitude = null
+            activeLandmarkLongitude = null
+        }
+
+        dialog.show()
+    }
+
+    private fun reloadLandmarkMatcher() {
+        landmarkMatcher = LandmarkMatcher(landmarkRepository)
+    }
+
+    private fun formatLandmarkCoords(latitude: Double, longitude: Double): String {
+        val lat = String.format(Locale.US, "%.6f", latitude)
+        val lon = String.format(Locale.US, "%.6f", longitude)
+        return "Коорд: $lat, $lon"
+    }
+
+    private fun addDialogSpacing(container: LinearLayout) {
+        container.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(10)
+            )
+        })
+    }
+
+    private fun dp(value: Int): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            value.toFloat(),
+            resources.displayMetrics
+        ).toInt()
     }
 
     private fun toast(text: String) {

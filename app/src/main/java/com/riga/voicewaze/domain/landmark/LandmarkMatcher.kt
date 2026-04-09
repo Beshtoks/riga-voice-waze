@@ -3,54 +3,66 @@ package com.riga.voicewaze.domain.landmark
 import com.riga.voicewaze.data.local.LandmarkRepository
 
 class LandmarkMatcher(
-    private val repository: LandmarkRepository
+    repository: LandmarkRepository
 ) {
+
+    private val entries = repository.getAll()
 
     fun findBestMatch(input: String): LandmarkMatchResult {
         val normalizedInput = normalize(input)
 
         if (normalizedInput.isBlank()) {
             return LandmarkMatchResult(
-                name = "",
+                spokenPhrase = "",
+                displayName = "",
                 address = "",
+                latitude = null,
+                longitude = null,
                 matchPercent = 0,
                 isConfident = false
             )
         }
-
-        val entries = repository.getAll()
 
         var bestEntry: LandmarkEntry? = null
         var bestPercent = -1
         var bestScore = Int.MAX_VALUE
 
         for (entry in entries) {
-            val normalizedName = normalize(entry.name)
-            val score = levenshtein(normalizedInput, normalizedName)
-            val percent = similarityPercent(normalizedInput, normalizedName)
+            val normalizedPhrase = normalize(entry.spokenPhrase)
+            val score = levenshtein(normalizedInput, normalizedPhrase)
+            val percent = when {
+                normalizedPhrase == normalizedInput -> 100
+                normalizedPhrase.startsWith(normalizedInput) -> (80 + normalizedInput.length * 3).coerceAtMost(99)
+                normalizedInput.startsWith(normalizedPhrase) -> 75
+                else -> similarityPercent(normalizedInput, normalizedPhrase)
+            }
 
-            if (percent > bestPercent) {
+            if (percent > bestPercent || (percent == bestPercent && score < bestScore)) {
                 bestPercent = percent
-                bestScore = score
-                bestEntry = entry
-            } else if (percent == bestPercent && score < bestScore) {
                 bestScore = score
                 bestEntry = entry
             }
         }
 
-        if (bestEntry == null) {
+        val winner = bestEntry
+        if (winner == null) {
             return LandmarkMatchResult(
-                name = "",
+                spokenPhrase = "",
+                displayName = "",
                 address = "",
+                latitude = null,
+                longitude = null,
                 matchPercent = 0,
                 isConfident = false
             )
         }
 
         return LandmarkMatchResult(
-            name = bestEntry.name,
-            address = bestEntry.address,
+            spokenPhrase = winner.spokenPhrase,
+            displayName = winner.displayName,
+            address = winner.address,
+            latitude = winner.latitude.takeIf { it != 0.0 },
+            longitude = winner.longitude.takeIf { it != 0.0 },
             matchPercent = bestPercent.coerceAtLeast(0),
             isConfident = bestPercent >= 60
         )
