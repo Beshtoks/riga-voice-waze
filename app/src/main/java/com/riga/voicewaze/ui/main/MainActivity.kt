@@ -1251,19 +1251,23 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        val dialog = AlertDialog.Builder(this)
+            .setView(root)
+            .create()
+
         val closeButton = createBottomButton("Закрыть") {
-            activeLandmarkDialog?.dismiss()
+            dialog.dismiss()
         }
         val exportButton = createBottomButton("Экспорт") {
-            activeLandmarkDialog?.dismiss()
+            dialog.dismiss()
             exportLandmarks()
         }
         val importButton = createBottomButton("Импорт") {
-            activeLandmarkDialog?.dismiss()
+            dialog.dismiss()
             importLandmarks()
         }
         val addButton = createBottomButton("Добавить") {
-            activeLandmarkDialog?.dismiss()
+            dialog.dismiss()
             showLandmarkEditDialog(null)
         }
 
@@ -1272,10 +1276,6 @@ class MainActivity : AppCompatActivity() {
         buttonsRow.addView(importButton)
         buttonsRow.addView(addButton)
         root.addView(buttonsRow)
-
-        val dialog = AlertDialog.Builder(this)
-            .setView(root)
-            .create()
 
         dialog.setOnDismissListener {
             if (activeLandmarkDialog === dialog) {
@@ -1430,7 +1430,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         dialog.setOnDismissListener {
-            activeLandmarkDialog = null
+            if (activeLandmarkDialog === dialog) {
+                activeLandmarkDialog = null
+            }
             activeLandmarkSpokenEdit = null
             activeLandmarkDisplayEdit = null
             activeLandmarkAddressEdit = null
