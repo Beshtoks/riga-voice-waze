@@ -14,6 +14,11 @@
         android:theme="@style/Theme.RigaAddressVoice">
 
         <activity
+            android:name=".ui.distance.DistanceActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
             android:name=".ui.map.MapPickerActivity"
             android:exported="false"
             android:screenOrientation="portrait" />

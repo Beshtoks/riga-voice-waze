@@ -47,6 +47,7 @@ import com.riga.voicewaze.domain.validator.HouseValidationResult
 import com.riga.voicewaze.domain.validator.HouseValidationStatus
 import com.riga.voicewaze.domain.validator.NominatimHouseValidator
 import com.riga.voicewaze.ui.map.MapPickerActivity
+import com.riga.voicewaze.ui.distance.DistanceActivity
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -331,6 +332,11 @@ class MainActivity : AppCompatActivity() {
             }
 
             validateCurrentAddressAndOpenWaze()
+        }
+
+        btnWaze.setOnLongClickListener {
+            startActivity(Intent(this, DistanceActivity::class.java))
+            true
         }
 
         etInput.addTextChangedListener(object : TextWatcher {
