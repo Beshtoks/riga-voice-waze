@@ -94,10 +94,12 @@ class MainActivity : AppCompatActivity() {
     private var lastAddress: String = ""
     private var suppressTextWatcher: Boolean = false
     private var lastAddressNeedsHouseValidation: Boolean = false
-    private var lastHouseValidationResult: HouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
+    private var lastHouseValidationResult: HouseValidationResult =
+        HouseValidationResult(HouseValidationStatus.VALID)
     private var isLatvianCloudRecording: Boolean = false
     private var isRecordingDotVisible: Boolean = true
-    private var lastProcessedQuery: ProcessedAddressQuery = ProcessedAddressQuery("", "", "", null, "Rīga", false, null)
+    private var lastProcessedQuery: ProcessedAddressQuery =
+        ProcessedAddressQuery("", "", "", null, "Rīga", false, null)
 
     private var recordingDotView: TextView? = null
     private var activeLandmarkDialog: AlertDialog? = null
@@ -113,7 +115,8 @@ class MainActivity : AppCompatActivity() {
             if (!isLatvianCloudRecording) return
 
             isRecordingDotVisible = !isRecordingDotVisible
-            recordingDotView?.visibility = if (isRecordingDotVisible) View.VISIBLE else View.INVISIBLE
+            recordingDotView?.visibility =
+                if (isRecordingDotVisible) View.VISIBLE else View.INVISIBLE
 
             if (isLatvianCloudRecording) {
                 uiHandler.postDelayed(this, 500L)
@@ -173,13 +176,62 @@ class MainActivity : AppCompatActivity() {
             activeLandmarkLongitude = longitude
             if (displayName.isNotBlank()) {
                 activeLandmarkDisplayEdit?.setText(displayName)
-                activeLandmarkDisplayEdit?.setSelection(activeLandmarkDisplayEdit?.text?.length ?: 0)
+                activeLandmarkDisplayEdit?.setSelection(
+                    activeLandmarkDisplayEdit?.text?.length ?: 0
+                )
             }
             if (address.isNotBlank()) {
                 activeLandmarkAddressEdit?.setText(address)
-                activeLandmarkAddressEdit?.setSelection(activeLandmarkAddressEdit?.text?.length ?: 0)
+                activeLandmarkAddressEdit?.setSelection(
+                    activeLandmarkAddressEdit?.text?.length ?: 0
+                )
             }
             activeLandmarkCoordsText?.text = formatLandmarkCoords(latitude, longitude)
+        }
+
+    private val createLandmarksDocumentLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+            if (uri == null) return@registerForActivityResult
+
+            try {
+                val json = landmarkRepository.exportToJsonString()
+                contentResolver.openOutputStream(uri)?.use { output ->
+                    output.write(json.toByteArray(Charsets.UTF_8))
+                    output.flush()
+                }
+                toast("Экспорт завершён")
+            } catch (_: Exception) {
+                toast("Ошибка экспорта")
+            }
+        }
+
+    private val openLandmarksDocumentLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@registerForActivityResult
+
+            try {
+                val json = contentResolver.openInputStream(uri)?.use { input ->
+                    input.bufferedReader(Charsets.UTF_8).readText()
+                }.orEmpty()
+
+                if (json.isBlank()) {
+                    toast("Файл пустой")
+                    return@registerForActivityResult
+                }
+
+                val imported = landmarkRepository.importFromJsonString(json)
+                if (!imported) {
+                    toast("Не удалось импортировать файл")
+                    return@registerForActivityResult
+                }
+
+                reloadLandmarkMatcher()
+                activeLandmarkDialog?.dismiss()
+                showLandmarkListDialog()
+                toast("Импорт завершён")
+            } catch (_: Exception) {
+                toast("Ошибка импорта")
+            }
         }
 
     private val micPermissionLauncher =
@@ -282,8 +334,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         etInput.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun beforeTextChanged(
+                s: CharSequence?,
+                start: Int,
+                count: Int,
+                after: Int
+            ) = Unit
+
+            override fun onTextChanged(
+                s: CharSequence?,
+                start: Int,
+                before: Int,
+                count: Int
+            ) = Unit
 
             override fun afterTextChanged(s: Editable?) {
                 if (suppressTextWatcher) return
@@ -302,7 +365,8 @@ class MainActivity : AppCompatActivity() {
                         clearDiagnosticLines()
                         lastAddress = ""
                         lastAddressNeedsHouseValidation = false
-                        lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
+                        lastHouseValidationResult =
+                            HouseValidationResult(HouseValidationStatus.VALID)
                     }
                     return
                 }
@@ -479,7 +543,8 @@ class MainActivity : AppCompatActivity() {
         val input = text.trim()
 
         if (input.isBlank()) {
-            tvResult.text = if (currentMode == VoiceMode.ADDRESS_LV) "Введите адрес" else "Введите объект"
+            tvResult.text =
+                if (currentMode == VoiceMode.ADDRESS_LV) "Введите адрес" else "Введите объект"
             clearDiagnosticLines()
             lastAddress = ""
             lastAddressNeedsHouseValidation = false
@@ -519,7 +584,10 @@ class MainActivity : AppCompatActivity() {
                 lastProcessedQuery = processed
                 lastAddress = ""
                 lastAddressNeedsHouseValidation = false
-                lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.NOT_FOUND, processed.errorMessage ?: "Адрес введён некорректно")
+                lastHouseValidationResult = HouseValidationResult(
+                    HouseValidationStatus.NOT_FOUND,
+                    processed.errorMessage ?: "Адрес введён некорректно"
+                )
                 tvResult.text = processed.errorMessage ?: "Адрес введён некорректно"
                 autoOpenAfterVoice = false
             }
@@ -541,7 +609,8 @@ class MainActivity : AppCompatActivity() {
                 clearDiagnosticLines()
                 lastAddress = ""
                 lastAddressNeedsHouseValidation = false
-                lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.NOT_FOUND, "Улица не найдена")
+                lastHouseValidationResult =
+                    HouseValidationResult(HouseValidationStatus.NOT_FOUND, "Улица не найдена")
                 tvResult.text = "Улица не найдена"
                 autoOpenAfterVoice = false
             }
@@ -576,7 +645,8 @@ class MainActivity : AppCompatActivity() {
             lastAddressNeedsHouseValidation = processed.houseNumber != null
             lastHouseValidationResult = validationResult
 
-            tvPrepared.text = if (processed.displayText.isBlank()) "" else "Preprocessor: ${processed.displayText}"
+            tvPrepared.text =
+                if (processed.displayText.isBlank()) "" else "Preprocessor: ${processed.displayText}"
             tvResult.text = "$finalAddress, Latvija"
             applyValidationUi(validationResult)
 
@@ -635,7 +705,10 @@ class MainActivity : AppCompatActivity() {
                         lastProcessedQuery = processed
                         lastAddress = ""
                         lastAddressNeedsHouseValidation = false
-                        lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.NOT_FOUND, processed.errorMessage ?: "Адрес введён некорректно")
+                        lastHouseValidationResult = HouseValidationResult(
+                            HouseValidationStatus.NOT_FOUND,
+                            processed.errorMessage ?: "Адрес введён некорректно"
+                        )
                         tvResult.text = processed.errorMessage ?: "Адрес введён некорректно"
                     }
                     return@execute
@@ -656,7 +729,8 @@ class MainActivity : AppCompatActivity() {
                         tvResult.text = "Улица не найдена"
                         lastAddress = ""
                         lastAddressNeedsHouseValidation = false
-                        lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.NOT_FOUND, "Улица не найдена")
+                        lastHouseValidationResult =
+                            HouseValidationResult(HouseValidationStatus.NOT_FOUND, "Улица не найдена")
                     }
                     return@execute
                 }
@@ -687,7 +761,8 @@ class MainActivity : AppCompatActivity() {
                     lastAddressNeedsHouseValidation = processed.houseNumber != null
                     lastHouseValidationResult = validationResult
 
-                    tvPrepared.text = if (processed.displayText.isBlank()) "" else "Preprocessor: ${processed.displayText}"
+                    tvPrepared.text =
+                        if (processed.displayText.isBlank()) "" else "Preprocessor: ${processed.displayText}"
                     tvResult.text = "$bestAddress, Latvija"
                     applyValidationUi(validationResult)
 
@@ -699,7 +774,10 @@ class MainActivity : AppCompatActivity() {
                     clearDiagnosticLines()
                     lastAddress = ""
                     lastAddressNeedsHouseValidation = false
-                    lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.CHECK_FAILED, "Не удалось проверить дом через интернет")
+                    lastHouseValidationResult = HouseValidationResult(
+                        HouseValidationStatus.CHECK_FAILED,
+                        "Не удалось проверить дом через интернет"
+                    )
                     tvResult.text = "Не удалось проверить дом через интернет"
                     applyValidationUi(lastHouseValidationResult)
                 }
@@ -770,15 +848,8 @@ class MainActivity : AppCompatActivity() {
         lastAddressNeedsHouseValidation = false
         lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
         autoOpenAfterVoice = false
-        tvResult.text = if (currentMode == VoiceMode.ADDRESS_LV) "Введите адрес" else "Введите объект"
-    }
-
-    private fun onSuggestionCommitted(address: String) {
-        suppressTextWatcher = true
-        etInput.setText(address)
-        etInput.setSelection(address.length)
-        suppressTextWatcher = false
-        handleSearch(address, false)
+        tvResult.text =
+            if (currentMode == VoiceMode.ADDRESS_LV) "Введите адрес" else "Введите объект"
     }
 
     private fun startGoogleVoiceRecognition() {
@@ -892,11 +963,12 @@ class MainActivity : AppCompatActivity() {
     private fun applyValidationUi(result: HouseValidationResult) {
         val statusText = mapValidationStatus(result.status)
         tvValidation.text = buildValidationText(statusText, validationColor(result.status))
-        tvCoords.text = if (result.status == HouseValidationStatus.VALID || result.status == HouseValidationStatus.RELATED_FOUND) {
-            formatCoordsLine(result)
-        } else {
-            ""
-        }
+        tvCoords.text =
+            if (result.status == HouseValidationStatus.VALID || result.status == HouseValidationStatus.RELATED_FOUND) {
+                formatCoordsLine(result)
+            } else {
+                ""
+            }
     }
 
     private fun buildValidationText(statusText: String, statusColor: Int): CharSequence {
@@ -922,7 +994,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun validationAllowsOpen(result: HouseValidationResult): Boolean {
-        return result.status == HouseValidationStatus.VALID || result.status == HouseValidationStatus.RELATED_FOUND
+        return result.status == HouseValidationStatus.VALID ||
+                result.status == HouseValidationStatus.RELATED_FOUND
     }
 
     private fun mapValidationStatus(status: HouseValidationStatus): String {
@@ -974,7 +1047,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun validateHouseIfNeeded(street: String, houseNumber: String?, city: String): HouseValidationResult {
+    private fun validateHouseIfNeeded(
+        street: String,
+        houseNumber: String?,
+        city: String
+    ): HouseValidationResult {
         if (houseNumber.isNullOrBlank()) {
             return HouseValidationResult(
                 HouseValidationStatus.NOT_FOUND,
@@ -1065,27 +1142,154 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showLandmarkListDialog() {
+        activeLandmarkDialog?.dismiss()
+
         val landmarks = landmarkRepository.getAll()
-        val items = if (landmarks.isEmpty()) {
-            arrayOf("Список объектов пуст")
-        } else {
-            landmarks.map { "${it.spokenPhrase} → ${it.displayName}" }.toTypedArray()
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20))
+            setBackgroundColor(Color.parseColor("#4A4A4A"))
         }
 
-        AlertDialog.Builder(this)
-            .setTitle("Редактор объектов")
-            .setItems(items) { dialog, which ->
-                dialog.dismiss()
-                if (landmarks.isNotEmpty()) {
-                    showLandmarkEditDialog(landmarks[which])
+        val title = TextView(this).apply {
+            text = "Редактор объектов"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+        }
+        root.addView(title)
+
+        root.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(1)
+            ).apply {
+                topMargin = dp(14)
+                bottomMargin = dp(10)
+            }
+            setBackgroundColor(Color.parseColor("#666666"))
+        })
+
+        val scrollView = ScrollView(this)
+        val listContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        if (landmarks.isEmpty()) {
+            listContainer.addView(TextView(this).apply {
+                text = "Список объектов пуст"
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                setPadding(0, dp(18), 0, dp(18))
+            })
+        } else {
+            landmarks.forEach { landmark ->
+                listContainer.addView(TextView(this).apply {
+                    text = "${landmark.spokenPhrase} → ${landmark.displayName}"
+                    setTextColor(Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                    setPadding(0, dp(14), 0, dp(14))
+                    setOnClickListener {
+                        activeLandmarkDialog?.dismiss()
+                        showLandmarkEditDialog(landmark)
+                    }
+                })
+            }
+        }
+
+        scrollView.addView(listContainer)
+
+        val scrollParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            0
+        ).apply {
+            weight = 1f
+        }
+        root.addView(scrollView, scrollParams)
+
+        root.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(1)
+            ).apply {
+                topMargin = dp(8)
+                bottomMargin = dp(10)
+            }
+            setBackgroundColor(Color.parseColor("#666666"))
+        })
+
+        val buttonsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = 4f
+        }
+
+        fun createBottomButton(text: String, onClick: () -> Unit): Button {
+            return Button(this).apply {
+                this.text = text
+                isAllCaps = false
+                textSize = 13f
+                maxLines = 1
+                isSingleLine = true
+                minimumHeight = 0
+                minHeight = 0
+                setPadding(dp(6), dp(10), dp(6), dp(10))
+                setOnClickListener { onClick() }
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f
+                ).apply {
+                    marginStart = dp(4)
+                    marginEnd = dp(4)
                 }
             }
-            .setPositiveButton("Добавить") { dialog, _ ->
-                dialog.dismiss()
-                showLandmarkEditDialog(null)
+        }
+
+        val closeButton = createBottomButton("Закрыть") {
+            activeLandmarkDialog?.dismiss()
+        }
+        val exportButton = createBottomButton("Экспорт") {
+            activeLandmarkDialog?.dismiss()
+            exportLandmarks()
+        }
+        val importButton = createBottomButton("Импорт") {
+            activeLandmarkDialog?.dismiss()
+            importLandmarks()
+        }
+        val addButton = createBottomButton("Добавить") {
+            activeLandmarkDialog?.dismiss()
+            showLandmarkEditDialog(null)
+        }
+
+        buttonsRow.addView(closeButton)
+        buttonsRow.addView(exportButton)
+        buttonsRow.addView(importButton)
+        buttonsRow.addView(addButton)
+        root.addView(buttonsRow)
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(root)
+            .create()
+
+        dialog.setOnDismissListener {
+            if (activeLandmarkDialog === dialog) {
+                activeLandmarkDialog = null
             }
-            .setNegativeButton("Закрыть", null)
-            .show()
+        }
+
+        activeLandmarkDialog = dialog
+        dialog.show()
+
+        val width = (resources.displayMetrics.widthPixels * 0.92f).toInt()
+        dialog.window?.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun exportLandmarks() {
+        createLandmarksDocumentLauncher.launch("riga_voice_waze_objects.json")
+    }
+
+    private fun importLandmarks() {
+        openLandmarksDocumentLauncher.launch(arrayOf("application/json", "*/*"))
     }
 
     private fun showLandmarkEditDialog(existing: LandmarkEntry?) {
@@ -1127,8 +1331,14 @@ class MainActivity : AppCompatActivity() {
                 activeLandmarkLongitude = existing?.longitude
                 val intent = Intent(this@MainActivity, MapPickerActivity::class.java)
                 if (activeLandmarkLatitude != null && activeLandmarkLongitude != null) {
-                    intent.putExtra(MapPickerActivity.EXTRA_INITIAL_LATITUDE, activeLandmarkLatitude!!)
-                    intent.putExtra(MapPickerActivity.EXTRA_INITIAL_LONGITUDE, activeLandmarkLongitude!!)
+                    intent.putExtra(
+                        MapPickerActivity.EXTRA_INITIAL_LATITUDE,
+                        activeLandmarkLatitude!!
+                    )
+                    intent.putExtra(
+                        MapPickerActivity.EXTRA_INITIAL_LONGITUDE,
+                        activeLandmarkLongitude!!
+                    )
                 }
                 mapPickerLauncher.launch(intent)
             }
