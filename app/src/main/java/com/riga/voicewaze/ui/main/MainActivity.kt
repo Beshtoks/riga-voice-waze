@@ -103,7 +103,8 @@ class MainActivity : AppCompatActivity() {
         ProcessedAddressQuery("", "", "", null, "Rīga", false, null)
 
     private var recordingDotView: TextView? = null
-    private var activeLandmarkDialog: AlertDialog? = null
+    private var activeLandmarkListDialog: AlertDialog? = null
+    private var activeLandmarkEditDialog: AlertDialog? = null
     private var activeLandmarkSpokenEdit: EditText? = null
     private var activeLandmarkDisplayEdit: EditText? = null
     private var activeLandmarkAddressEdit: EditText? = null
@@ -227,7 +228,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 reloadLandmarkMatcher()
-                activeLandmarkDialog?.dismiss()
+                activeLandmarkEditDialog?.dismiss()
                 showLandmarkListDialog()
                 toast("Импорт завершён")
             } catch (_: Exception) {
@@ -1148,7 +1149,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showLandmarkListDialog() {
-        activeLandmarkDialog?.dismiss()
+        activeLandmarkEditDialog?.dismiss()
 
         val landmarks = landmarkRepository.getAll()
 
@@ -1196,7 +1197,7 @@ class MainActivity : AppCompatActivity() {
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
                     setPadding(0, dp(14), 0, dp(14))
                     setOnClickListener {
-                        activeLandmarkDialog?.dismiss()
+                        activeLandmarkEditDialog?.dismiss()
                         showLandmarkEditDialog(landmark)
                     }
                 })
@@ -1267,7 +1268,6 @@ class MainActivity : AppCompatActivity() {
             importLandmarks()
         }
         val addButton = createBottomButton("Добавить") {
-            dialog.dismiss()
             showLandmarkEditDialog(null)
         }
 
@@ -1278,12 +1278,12 @@ class MainActivity : AppCompatActivity() {
         root.addView(buttonsRow)
 
         dialog.setOnDismissListener {
-            if (activeLandmarkDialog === dialog) {
-                activeLandmarkDialog = null
+            if (activeLandmarkListDialog === dialog) {
+                activeLandmarkListDialog = null
             }
         }
 
-        activeLandmarkDialog = dialog
+        activeLandmarkListDialog = dialog
         dialog.show()
 
         val width = (resources.displayMetrics.widthPixels * 0.92f).toInt()
@@ -1335,7 +1335,9 @@ class MainActivity : AppCompatActivity() {
                 activeLandmarkCoordsText = coordsText
                 activeLandmarkLatitude = existing?.latitude
                 activeLandmarkLongitude = existing?.longitude
-                val intent = Intent(this@MainActivity, MapPickerActivity::class.java)
+                val intent = Intent(this@MainActivity, MapPickerActivity::class.java).apply {
+                    putExtra(MapPickerActivity.EXTRA_MAP_PROVIDER, MapPickerActivity.PROVIDER_GOOGLE)
+                }
                 if (activeLandmarkLatitude != null && activeLandmarkLongitude != null) {
                     intent.putExtra(
                         MapPickerActivity.EXTRA_INITIAL_LATITUDE,
@@ -1375,7 +1377,7 @@ class MainActivity : AppCompatActivity() {
             }
             .create()
 
-        activeLandmarkDialog = dialog
+        activeLandmarkEditDialog = dialog
 
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -1414,7 +1416,7 @@ class MainActivity : AppCompatActivity() {
                         )
                         reloadLandmarkMatcher()
                         dialog.dismiss()
-                        showLandmarkListDialog()
+                        refreshLandmarkListDialog()
                     }
                 }
             }
@@ -1424,14 +1426,14 @@ class MainActivity : AppCompatActivity() {
                     landmarkRepository.delete(existing.id)
                     reloadLandmarkMatcher()
                     dialog.dismiss()
-                    showLandmarkListDialog()
+                    refreshLandmarkListDialog()
                 }
             }
         }
 
         dialog.setOnDismissListener {
-            if (activeLandmarkDialog === dialog) {
-                activeLandmarkDialog = null
+            if (activeLandmarkEditDialog === dialog) {
+                activeLandmarkEditDialog = null
             }
             activeLandmarkSpokenEdit = null
             activeLandmarkDisplayEdit = null
@@ -1442,6 +1444,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         dialog.show()
+    }
+
+    private fun refreshLandmarkListDialog() {
+        activeLandmarkListDialog?.dismiss()
+        showLandmarkListDialog()
     }
 
     private fun reloadLandmarkMatcher() {
