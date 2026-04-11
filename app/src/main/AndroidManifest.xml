@@ -13,6 +13,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RigaAddressVoice">
 
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyA7WjPcDuufl3ZSzArBaBsPsEtyK5C9F1A" />
+
         <activity
             android:name=".ui.distance.DistanceActivity"
             android:exported="false"
