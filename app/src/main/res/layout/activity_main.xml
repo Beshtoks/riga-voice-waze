@@ -74,7 +74,22 @@
     </LinearLayout>
 
     <TextView
+        android:id="@+id/tvSelected"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text=""
+        android:textSize="15sp"
+        android:textColor="#B0BEC5" />
+
+    <TextView
         android:id="@+id/tvPrepared"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text=""
+        android:textSize="15sp"
+        android:textColor="#B0BEC5" />
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"

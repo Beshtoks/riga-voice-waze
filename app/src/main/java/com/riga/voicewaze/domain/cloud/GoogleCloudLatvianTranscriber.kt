@@ -1,6 +1,7 @@
 package com.riga.voicewaze.domain.cloud
 
 import android.util.Base64
+import com.riga.voicewaze.BuildConfig
 import org.json.JSONObject
 import java.io.File
 import java.io.OutputStreamWriter
@@ -9,17 +10,10 @@ import java.net.URL
 
 class GoogleCloudLatvianTranscriber {
 
-    companion object {
-        // ВСТАВЬ СЮДА СВОЙ GOOGLE CLOUD SPEECH API KEY
-        // Пока строка пустая, проект будет собираться,
-        // но облачное распознавание работать не будет.
-        private const val API_KEY = "AIzaSyCgwY7uRHHBZUjwsygKrlPbNtDM--LBDGw"
-    }
-
     fun transcribe(wavFile: File): String {
-        val apiKey = API_KEY.trim()
+        val apiKey = BuildConfig.GOOGLE_CLOUD_STT_API_KEY.trim()
         require(apiKey.isNotBlank()) {
-            "Не задан Google Cloud Speech API key в GoogleCloudLatvianTranscriber.kt"
+            "Не задан Google Cloud Speech API key в local.properties (GOOGLE_CLOUD_STT_API_KEY)"
         }
 
         val audioBase64 = Base64.encodeToString(wavFile.readBytes(), Base64.NO_WRAP)

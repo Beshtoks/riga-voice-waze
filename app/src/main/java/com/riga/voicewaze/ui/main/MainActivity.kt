@@ -68,6 +68,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnMicRu: Button
     private lateinit var btnMicLv: Button
     private lateinit var etInput: EditText
+    private lateinit var tvSelected: TextView
     private lateinit var tvPrepared: TextView
     private lateinit var tvResult: TextView
     private lateinit var tvValidation: TextView
@@ -265,6 +266,7 @@ class MainActivity : AppCompatActivity() {
         btnMicRu = findViewById(R.id.btnMicRu)
         btnMicLv = findViewById(R.id.btnMicLv)
         etInput = findViewById(R.id.etInput)
+        tvSelected = findViewById(R.id.tvSelected)
         tvPrepared = findViewById(R.id.tvPrepared)
         tvResult = findViewById(R.id.tvResult)
         tvValidation = findViewById(R.id.tvValidation)
@@ -460,6 +462,7 @@ class MainActivity : AppCompatActivity() {
                 btnMicLv.alpha = 1.0f
                 btnMicRu.alpha = 0.65f
                 etInput.hint = "Введите адрес"
+                clearSelectedObjectLine()
             }
             VoiceMode.OBJECT_RU -> {
                 btnMicRu.alpha = 1.0f
@@ -518,6 +521,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun clearSelectedObjectLine() {
+        tvSelected.text = ""
+    }
+
+    private fun showSelectedObjectLine(displayName: String) {
+        tvSelected.text = if (displayName.isBlank()) "" else "Выбрано: $displayName"
+    }
+
     private fun clearDiagnosticLines() {
         tvPrepared.text = ""
         tvValidation.text = ""
@@ -552,6 +563,9 @@ class MainActivity : AppCompatActivity() {
         if (input.isBlank()) {
             tvResult.text =
                 if (currentMode == VoiceMode.ADDRESS_LV) "Введите адрес" else "Введите объект"
+            if (currentMode == VoiceMode.ADDRESS_LV) {
+                clearSelectedObjectLine()
+            }
             clearDiagnosticLines()
             lastAddress = ""
             lastAddressNeedsHouseValidation = false
@@ -587,6 +601,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 finishBusyState()
                 clearSuggestions()
+                clearSelectedObjectLine()
                 clearDiagnosticLines()
                 lastProcessedQuery = processed
                 lastAddress = ""
@@ -613,6 +628,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 finishBusyState()
                 clearSuggestions()
+                clearSelectedObjectLine()
                 clearDiagnosticLines()
                 lastAddress = ""
                 lastAddressNeedsHouseValidation = false
@@ -652,6 +668,7 @@ class MainActivity : AppCompatActivity() {
             lastAddressNeedsHouseValidation = processed.houseNumber != null
             lastHouseValidationResult = validationResult
 
+            clearSelectedObjectLine()
             tvPrepared.text =
                 if (processed.displayText.isBlank()) "" else "Preprocessor: ${processed.displayText}"
             tvResult.text = "$finalAddress, Latvija"
@@ -674,6 +691,11 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             finishBusyState()
             clearDiagnosticLines()
+            if (accepted) {
+                showSelectedObjectLine(match.displayName)
+            } else {
+                clearSelectedObjectLine()
+            }
             lastAddress = if (accepted) match.address else ""
             lastAddressNeedsHouseValidation = false
             lastHouseValidationResult = if (accepted) {
@@ -708,6 +730,7 @@ class MainActivity : AppCompatActivity() {
                 if (!processed.isValid) {
                     runOnUiThread {
                         clearSuggestions()
+                        clearSelectedObjectLine()
                         clearDiagnosticLines()
                         lastProcessedQuery = processed
                         lastAddress = ""
@@ -732,6 +755,7 @@ class MainActivity : AppCompatActivity() {
                 if (matches.isEmpty()) {
                     runOnUiThread {
                         clearSuggestions()
+                        clearSelectedObjectLine()
                         clearDiagnosticLines()
                         tvResult.text = "Улица не найдена"
                         lastAddress = ""
@@ -763,6 +787,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 runOnUiThread {
+                    clearSelectedObjectLine()
                     lastProcessedQuery = processed
                     lastAddress = bestAddress
                     lastAddressNeedsHouseValidation = processed.houseNumber != null
@@ -778,6 +803,7 @@ class MainActivity : AppCompatActivity() {
             } catch (_: Exception) {
                 runOnUiThread {
                     clearSuggestions()
+                    clearSelectedObjectLine()
                     clearDiagnosticLines()
                     lastAddress = ""
                     lastAddressNeedsHouseValidation = false
@@ -795,6 +821,7 @@ class MainActivity : AppCompatActivity() {
     private fun onSuggestionSelected(suggestion: AddressSuggestion) {
         val parsed = parseDisplayAddress(suggestion.street)
         if (parsed == null) {
+            clearSelectedObjectLine()
             lastAddress = suggestion.street
             lastAddressNeedsHouseValidation = false
             lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
@@ -804,6 +831,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (parsed.houseNumber.isNullOrBlank()) {
+            clearSelectedObjectLine()
             lastAddress = suggestion.street
             lastAddressNeedsHouseValidation = false
             lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
@@ -826,6 +854,7 @@ class MainActivity : AppCompatActivity() {
 
             runOnUiThread {
                 finishBusyState()
+                clearSelectedObjectLine()
                 lastAddress = finalAddress
                 lastAddressNeedsHouseValidation = true
                 lastHouseValidationResult = validationResult
@@ -849,6 +878,7 @@ class MainActivity : AppCompatActivity() {
         suppressTextWatcher = true
         etInput.setText("")
         suppressTextWatcher = false
+        clearSelectedObjectLine()
         clearDiagnosticLines()
         clearSuggestions()
         lastAddress = ""
@@ -895,6 +925,7 @@ class MainActivity : AppCompatActivity() {
             soundStartRecording()
             startRecordingIndicator()
             tvResult.text = "Запись адреса... Нажми ещё раз для остановки"
+            clearSelectedObjectLine()
             clearDiagnosticLines()
             clearSuggestions()
         } catch (e: Exception) {
