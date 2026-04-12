@@ -48,11 +48,20 @@ import com.riga.voicewaze.domain.validator.HouseValidationStatus
 import com.riga.voicewaze.domain.validator.NominatimHouseValidator
 import com.riga.voicewaze.ui.map.MapPickerActivity
 import com.riga.voicewaze.ui.distance.DistanceActivity
+import com.riga.voicewaze.jurmala.JurmalaDialog
+import com.riga.voicewaze.jurmala.JurmalaPoint
+import com.riga.voicewaze.jurmala.JurmalaLocationManager
+import com.riga.voicewaze.jurmala.JurmalaPointStore
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        private const val JURMALA_LATE_REMINDER_INTERVAL_MS = 10 * 60 * 1000L
+        private const val JURMALA_LATE_REMINDER_CHECK_MS = 60 * 1000L
+    }
 
     private enum class VoiceMode {
         ADDRESS_LV,
@@ -68,7 +77,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnMicRu: Button
     private lateinit var btnMicLv: Button
     private lateinit var etInput: EditText
-    private lateinit var tvSelected: TextView
     private lateinit var tvPrepared: TextView
     private lateinit var tvResult: TextView
     private lateinit var tvValidation: TextView
@@ -86,6 +94,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var houseValidator: NominatimHouseValidator
     private lateinit var addressPreprocessor: AddressPreprocessor
     private lateinit var suggestionAdapter: SuggestionAdapter
+    private lateinit var jurmalaStore: JurmalaPointStore
+    private lateinit var jurmalaLocationManager: JurmalaLocationManager
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -112,6 +122,15 @@ class MainActivity : AppCompatActivity() {
     private var activeLandmarkCoordsText: TextView? = null
     private var activeLandmarkLatitude: Double? = null
     private var activeLandmarkLongitude: Double? = null
+    private var activeJurmalaPaymentDialog: AlertDialog? = null
+    private var suppressNextLateReminderUntil: Long = 0L
+
+    private val jurmalaLateReminderRunnable = object : Runnable {
+        override fun run() {
+            checkLateJurmalaReminder()
+            uiHandler.postDelayed(this, JURMALA_LATE_REMINDER_CHECK_MS)
+        }
+    }
 
     private val recordingBlinkRunnable = object : Runnable {
         override fun run() {
@@ -250,6 +269,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    private val locationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                startJurmalaLocationMonitoringIfAllowed()
+            } else {
+                toast("Нет доступа к геолокации")
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -266,7 +294,6 @@ class MainActivity : AppCompatActivity() {
         btnMicRu = findViewById(R.id.btnMicRu)
         btnMicLv = findViewById(R.id.btnMicLv)
         etInput = findViewById(R.id.etInput)
-        tvSelected = findViewById(R.id.tvSelected)
         tvPrepared = findViewById(R.id.tvPrepared)
         tvResult = findViewById(R.id.tvResult)
         tvValidation = findViewById(R.id.tvValidation)
@@ -284,6 +311,20 @@ class MainActivity : AppCompatActivity() {
         cloudTranscriber = GoogleCloudLatvianTranscriber()
         houseValidator = NominatimHouseValidator()
         addressPreprocessor = AddressPreprocessor()
+
+        jurmalaStore = JurmalaPointStore(this)
+        val jurmalaDialog = JurmalaDialog(this, jurmalaStore)
+        jurmalaLocationManager = JurmalaLocationManager(
+            context = this,
+            store = jurmalaStore,
+            onEnterZone = { point ->
+                runOnUiThread {
+                    handleJurmalaZoneEntered(point)
+                }
+            }
+        )
+
+        requestLocationPermissionIfNeeded()
 
         suggestionAdapter = SuggestionAdapter { suggestion ->
             onSuggestionSelected(suggestion)
@@ -326,6 +367,11 @@ class MainActivity : AppCompatActivity() {
         btnSearch.setOnClickListener {
             autoOpenAfterVoice = false
             handleSearch(etInput.text.toString(), false)
+        }
+
+        btnSearch.setOnLongClickListener {
+            jurmalaDialog.show()
+            true
         }
 
         btnWaze.setOnClickListener {
@@ -388,6 +434,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         btnMicLv.removeOnLayoutChangeListener(buttonLayoutListener)
+        uiHandler.removeCallbacks(jurmalaLateReminderRunnable)
         stopRecordingIndicator()
         safeStopLatvianRecording()
         toneGenerator.release()
@@ -462,7 +509,6 @@ class MainActivity : AppCompatActivity() {
                 btnMicLv.alpha = 1.0f
                 btnMicRu.alpha = 0.65f
                 etInput.hint = "Введите адрес"
-                clearSelectedObjectLine()
             }
             VoiceMode.OBJECT_RU -> {
                 btnMicRu.alpha = 1.0f
@@ -521,14 +567,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun clearSelectedObjectLine() {
-        tvSelected.text = ""
-    }
-
-    private fun showSelectedObjectLine(displayName: String) {
-        tvSelected.text = if (displayName.isBlank()) "" else "Выбрано: $displayName"
-    }
-
     private fun clearDiagnosticLines() {
         tvPrepared.text = ""
         tvValidation.text = ""
@@ -563,9 +601,6 @@ class MainActivity : AppCompatActivity() {
         if (input.isBlank()) {
             tvResult.text =
                 if (currentMode == VoiceMode.ADDRESS_LV) "Введите адрес" else "Введите объект"
-            if (currentMode == VoiceMode.ADDRESS_LV) {
-                clearSelectedObjectLine()
-            }
             clearDiagnosticLines()
             lastAddress = ""
             lastAddressNeedsHouseValidation = false
@@ -601,7 +636,6 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 finishBusyState()
                 clearSuggestions()
-                clearSelectedObjectLine()
                 clearDiagnosticLines()
                 lastProcessedQuery = processed
                 lastAddress = ""
@@ -628,7 +662,6 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 finishBusyState()
                 clearSuggestions()
-                clearSelectedObjectLine()
                 clearDiagnosticLines()
                 lastAddress = ""
                 lastAddressNeedsHouseValidation = false
@@ -668,7 +701,6 @@ class MainActivity : AppCompatActivity() {
             lastAddressNeedsHouseValidation = processed.houseNumber != null
             lastHouseValidationResult = validationResult
 
-            clearSelectedObjectLine()
             tvPrepared.text =
                 if (processed.displayText.isBlank()) "" else "Preprocessor: ${processed.displayText}"
             tvResult.text = "$finalAddress, Latvija"
@@ -691,11 +723,6 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             finishBusyState()
             clearDiagnosticLines()
-            if (accepted) {
-                showSelectedObjectLine(match.displayName)
-            } else {
-                clearSelectedObjectLine()
-            }
             lastAddress = if (accepted) match.address else ""
             lastAddressNeedsHouseValidation = false
             lastHouseValidationResult = if (accepted) {
@@ -730,7 +757,6 @@ class MainActivity : AppCompatActivity() {
                 if (!processed.isValid) {
                     runOnUiThread {
                         clearSuggestions()
-                        clearSelectedObjectLine()
                         clearDiagnosticLines()
                         lastProcessedQuery = processed
                         lastAddress = ""
@@ -755,7 +781,6 @@ class MainActivity : AppCompatActivity() {
                 if (matches.isEmpty()) {
                     runOnUiThread {
                         clearSuggestions()
-                        clearSelectedObjectLine()
                         clearDiagnosticLines()
                         tvResult.text = "Улица не найдена"
                         lastAddress = ""
@@ -787,7 +812,6 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 runOnUiThread {
-                    clearSelectedObjectLine()
                     lastProcessedQuery = processed
                     lastAddress = bestAddress
                     lastAddressNeedsHouseValidation = processed.houseNumber != null
@@ -803,7 +827,6 @@ class MainActivity : AppCompatActivity() {
             } catch (_: Exception) {
                 runOnUiThread {
                     clearSuggestions()
-                    clearSelectedObjectLine()
                     clearDiagnosticLines()
                     lastAddress = ""
                     lastAddressNeedsHouseValidation = false
@@ -821,7 +844,6 @@ class MainActivity : AppCompatActivity() {
     private fun onSuggestionSelected(suggestion: AddressSuggestion) {
         val parsed = parseDisplayAddress(suggestion.street)
         if (parsed == null) {
-            clearSelectedObjectLine()
             lastAddress = suggestion.street
             lastAddressNeedsHouseValidation = false
             lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
@@ -831,7 +853,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (parsed.houseNumber.isNullOrBlank()) {
-            clearSelectedObjectLine()
             lastAddress = suggestion.street
             lastAddressNeedsHouseValidation = false
             lastHouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID)
@@ -854,7 +875,6 @@ class MainActivity : AppCompatActivity() {
 
             runOnUiThread {
                 finishBusyState()
-                clearSelectedObjectLine()
                 lastAddress = finalAddress
                 lastAddressNeedsHouseValidation = true
                 lastHouseValidationResult = validationResult
@@ -878,7 +898,6 @@ class MainActivity : AppCompatActivity() {
         suppressTextWatcher = true
         etInput.setText("")
         suppressTextWatcher = false
-        clearSelectedObjectLine()
         clearDiagnosticLines()
         clearSuggestions()
         lastAddress = ""
@@ -925,7 +944,6 @@ class MainActivity : AppCompatActivity() {
             soundStartRecording()
             startRecordingIndicator()
             tvResult.text = "Запись адреса... Нажми ещё раз для остановки"
-            clearSelectedObjectLine()
             clearDiagnosticLines()
             clearSuggestions()
         } catch (e: Exception) {
@@ -1475,6 +1493,151 @@ class MainActivity : AppCompatActivity() {
         }
 
         dialog.show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        startJurmalaLocationMonitoringIfAllowed()
+        uiHandler.removeCallbacks(jurmalaLateReminderRunnable)
+        uiHandler.post(jurmalaLateReminderRunnable)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        uiHandler.removeCallbacks(jurmalaLateReminderRunnable)
+        try {
+            jurmalaLocationManager.stop()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun handleJurmalaZoneEntered(point: JurmalaPoint) {
+        val dayKey = currentDayKey()
+        if (jurmalaStore.isPaidToday(dayKey)) return
+        if (isFinishing || isDestroyed) return
+
+        jurmalaStore.markZoneEnteredToday(dayKey, point.name)
+        showJurmalaPaymentDialog(point.name)
+    }
+
+    private fun showJurmalaPaymentDialog(pointName: String) {
+        val dayKey = currentDayKey()
+        if (jurmalaStore.isPaidToday(dayKey)) return
+        if (isFinishing || isDestroyed) return
+
+        playJurmalaReminderTone()
+        activeJurmalaPaymentDialog?.dismiss()
+
+        val message = buildString {
+            append("Ты въехал в платную зону Юрмалы")
+            if (pointName.isNotBlank()) {
+                append("\nТочка: ")
+                append(pointName)
+            }
+            append("\nНужно оплатить пропуск до 23:59 сегодняшнего дня.")
+            if (isLateJurmalaReminder()) {
+                append("\nПосле 23:30 напоминание повторяется каждые 10 минут.")
+            }
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Зона Юрмалы")
+            .setMessage(message)
+            .setCancelable(false)
+            .setPositiveButton("Оплатить") { _, _ ->
+                jurmalaStore.setPaidToday(dayKey)
+                toast("Напоминание отключено до 23:59")
+            }
+            .setNegativeButton("Спасибо") { _, _ ->
+                if (isLateJurmalaReminder()) {
+                    val now = System.currentTimeMillis()
+                    suppressNextLateReminderUntil = now + JURMALA_LATE_REMINDER_INTERVAL_MS
+                    jurmalaStore.setLastLateReminderAt(now)
+                }
+            }
+            .create()
+
+        dialog.setOnDismissListener {
+            if (activeJurmalaPaymentDialog === dialog) {
+                activeJurmalaPaymentDialog = null
+            }
+        }
+
+        activeJurmalaPaymentDialog = dialog
+        dialog.show()
+    }
+
+    private fun checkLateJurmalaReminder() {
+
+        val dayKey = currentDayKey()
+        if (!isLateJurmalaReminder()) return
+        if (jurmalaStore.isPaidToday(dayKey)) return
+        if (activeJurmalaPaymentDialog?.isShowing == true) return
+        if (isFinishing || isDestroyed) return
+
+        val pointName = jurmalaStore.getPendingPointName(dayKey) ?: return
+        val now = System.currentTimeMillis()
+        val lastShown = jurmalaStore.getLastLateReminderAt()
+        if (now < suppressNextLateReminderUntil) return
+        if (lastShown != 0L && now - lastShown < JURMALA_LATE_REMINDER_INTERVAL_MS) return
+
+        jurmalaStore.setLastLateReminderAt(now)
+        showJurmalaPaymentDialog(pointName)
+    }
+
+    private fun playJurmalaReminderTone() {
+        try {
+            if (isLateJurmalaReminder()) {
+                toneGenerator.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 700)
+            } else {
+                toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 300)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun isLateJurmalaReminder(): Boolean {
+        val cal = java.util.Calendar.getInstance()
+        val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+        val minute = cal.get(java.util.Calendar.MINUTE)
+        return hour > 23 || (hour == 23 && minute >= 30)
+    }
+
+    private fun currentDayKey(): String {
+        val calendar = java.util.Calendar.getInstance()
+        val year = calendar.get(java.util.Calendar.YEAR)
+        val month = calendar.get(java.util.Calendar.MONTH) + 1
+        val day = calendar.get(java.util.Calendar.DAY_OF_MONTH)
+        return String.format(Locale.US, "%04d-%02d-%02d", year, month, day)
+    }
+
+    private fun requestLocationPermissionIfNeeded() {
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!granted) {
+            locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+    }
+
+    private fun startJurmalaLocationMonitoringIfAllowed() {
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!granted) {
+            return
+        }
+
+        try {
+            jurmalaLocationManager.start()
+        } catch (_: SecurityException) {
+            toast("Нет доступа к геолокации")
+        } catch (_: Exception) {
+        }
     }
 
     private fun refreshLandmarkListDialog() {
