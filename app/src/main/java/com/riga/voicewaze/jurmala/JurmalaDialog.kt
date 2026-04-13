@@ -2,6 +2,7 @@ package com.riga.voicewaze.jurmala
 
 import android.app.AlertDialog
 import android.content.Context
+import android.content.Intent
 import android.text.InputType
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
@@ -11,6 +12,7 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.Switch
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import java.util.Calendar
 import java.util.Locale
 
@@ -71,6 +73,12 @@ class JurmalaDialog(
 
         toggle.setOnCheckedChangeListener { _, isChecked ->
             store.setEnabled(isChecked)
+            val serviceIntent = Intent(context, JurmalaForegroundService::class.java)
+            if (isChecked) {
+                ContextCompat.startForegroundService(context, serviceIntent)
+            } else {
+                context.stopService(serviceIntent)
+            }
         }
 
         paidButton.setOnClickListener {
