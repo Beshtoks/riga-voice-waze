@@ -2,7 +2,7 @@ package com.riga.voicewaze.jurmala
 
 import android.app.AlertDialog
 import android.content.Context
-import android.content.Intent
+import android.graphics.Color
 import android.text.InputType
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
@@ -12,7 +12,6 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.Switch
 import android.widget.Toast
-import androidx.core.content.ContextCompat
 import java.util.Calendar
 import java.util.Locale
 
@@ -37,13 +36,8 @@ class JurmalaDialog(
         }
         layout.addView(toggle)
 
-        val paidButton = Button(context).apply {
-            text = if (store.isPaidToday(currentDayKey())) {
-                "✔ Оплачено сегодня"
-            } else {
-                "Оплачено сегодня"
-            }
-        }
+        val paidButton = Button(context)
+        updatePaidButton(paidButton)
         layout.addView(paidButton)
 
         val listView = ListView(context).apply {
@@ -73,18 +67,19 @@ class JurmalaDialog(
 
         toggle.setOnCheckedChangeListener { _, isChecked ->
             store.setEnabled(isChecked)
-            val serviceIntent = Intent(context, JurmalaForegroundService::class.java)
-            if (isChecked) {
-                ContextCompat.startForegroundService(context, serviceIntent)
-            } else {
-                context.stopService(serviceIntent)
-            }
         }
 
         paidButton.setOnClickListener {
-            store.setPaidToday(currentDayKey())
-            paidButton.text = "✔ Оплачено сегодня"
-            Toast.makeText(context, "Напоминания отключены до 23:59", Toast.LENGTH_SHORT).show()
+            val dayKey = currentDayKey()
+            if (store.isPaidToday(dayKey)) {
+                store.clearPaidToday()
+                updatePaidButton(paidButton)
+                Toast.makeText(context, "Статус сброшен: не оплачено", Toast.LENGTH_SHORT).show()
+            } else {
+                store.setPaidToday(dayKey)
+                updatePaidButton(paidButton)
+                Toast.makeText(context, "Оплачено до конца дня", Toast.LENGTH_SHORT).show()
+            }
         }
 
         addButton.setOnClickListener {
@@ -104,6 +99,18 @@ class JurmalaDialog(
         }
 
         dialog.show()
+    }
+
+    private fun updatePaidButton(button: Button) {
+        if (store.isPaidToday(currentDayKey())) {
+            button.text = "ОПЛАЧЕНО ДО КОНЦА ДНЯ"
+            button.setBackgroundColor(Color.parseColor("#2E7D32"))
+            button.setTextColor(Color.WHITE)
+        } else {
+            button.text = "НЕ ОПЛАЧЕНО"
+            button.setBackgroundColor(Color.parseColor("#C62828"))
+            button.setTextColor(Color.WHITE)
+        }
     }
 
     private fun showAddDialog(adapter: ArrayAdapter<String>) {
