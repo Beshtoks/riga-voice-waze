@@ -2,6 +2,7 @@ package com.riga.voicewaze.jurmala
 
 import android.app.AlertDialog
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.text.InputType
@@ -13,6 +14,7 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.Switch
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 
 class JurmalaDialog(
     private val context: Context,
@@ -119,6 +121,13 @@ class JurmalaDialog(
 
         toggle.setOnCheckedChangeListener { _, isChecked ->
             store.setEnabled(isChecked)
+
+            val serviceIntent = Intent(context, JurmalaForegroundService::class.java)
+            if (isChecked) {
+                ContextCompat.startForegroundService(context, serviceIntent)
+            } else {
+                context.stopService(serviceIntent)
+            }
         }
 
         paidButton.setOnClickListener {
