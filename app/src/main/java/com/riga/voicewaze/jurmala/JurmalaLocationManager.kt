@@ -24,10 +24,21 @@ class JurmalaLocationManager(
         if (!store.isEnabled()) return
 
         if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-            locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 3000L, 5f, listener)
+            locationManager.requestLocationUpdates(
+                LocationManager.GPS_PROVIDER,
+                3000L,
+                5f,
+                listener
+            )
         }
+
         if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-            locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 3000L, 5f, listener)
+            locationManager.requestLocationUpdates(
+                LocationManager.NETWORK_PROVIDER,
+                3000L,
+                5f,
+                listener
+            )
         }
     }
 
@@ -37,13 +48,24 @@ class JurmalaLocationManager(
 
     private fun checkLocation(location: Location) {
         val points = store.loadPoints()
+        val todayKey = JurmalaTime.todayKey()
+
         for (point in points) {
             val result = FloatArray(1)
-            Location.distanceBetween(location.latitude, location.longitude, point.lat, point.lng, result)
+            Location.distanceBetween(
+                location.latitude,
+                location.longitude,
+                point.lat,
+                point.lng,
+                result
+            )
+
             val isInside = result[0] <= point.radius
             val wasInside = insideStates[point.name] ?: false
 
             if (!wasInside && isInside) {
+                store.setEnteredToday(todayKey)
+                store.markZoneEnteredToday(todayKey, point.name)
                 onEnterZone(point)
             }
 

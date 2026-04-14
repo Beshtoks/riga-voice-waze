@@ -3,6 +3,7 @@ package com.riga.voicewaze.jurmala
 import android.app.AlertDialog
 import android.content.Context
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.text.InputType
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
@@ -12,8 +13,6 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.Switch
 import android.widget.Toast
-import java.util.Calendar
-import java.util.Locale
 
 class JurmalaDialog(
     private val context: Context,
@@ -37,8 +36,6 @@ class JurmalaDialog(
         layout.addView(toggle)
 
         val paidButton = Button(context)
-        updatePaidButton(paidButton)
-        layout.addView(paidButton)
 
         val listView = ListView(context).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -46,18 +43,73 @@ class JurmalaDialog(
                 700
             )
         }
+
         val adapter = ArrayAdapter(
             context,
             android.R.layout.simple_list_item_1,
             points.map { formatPointLine(it) }.toMutableList()
         )
         listView.adapter = adapter
-        layout.addView(listView)
 
         val addButton = Button(context).apply {
             text = "Добавить точку"
         }
+
+        val paidParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            topMargin = 20
+            bottomMargin = 20
+        }
+        paidButton.layoutParams = paidParams
+
+        paidButton.minHeight = (addButton.minHeight - 20).coerceAtLeast(0)
+        paidButton.minimumHeight = (addButton.minimumHeight - 20).coerceAtLeast(0)
+        paidButton.setPadding(
+            addButton.paddingLeft,
+            (addButton.paddingTop - 10).coerceAtLeast(0),
+            addButton.paddingRight,
+            (addButton.paddingBottom - 10).coerceAtLeast(0)
+        )
+
+        layout.addView(paidButton)
+        layout.addView(listView)
         layout.addView(addButton)
+
+        fun rounded(color: Int): GradientDrawable {
+            return GradientDrawable().apply {
+                cornerRadius = 28f
+                setColor(color)
+            }
+        }
+
+        fun updatePaidButton() {
+            val entered = store.isEnteredToday()
+            val paid = store.isPaidToday()
+
+            when {
+                !entered -> {
+                    paidButton.text = "ВНЕ ЗОНЫ"
+                    paidButton.background = rounded(Color.parseColor("#696969")) // DimGrey
+                    paidButton.setTextColor(Color.WHITE)
+                }
+
+                !paid -> {
+                    paidButton.text = "НЕ ОПЛАЧЕНО"
+                    paidButton.background = rounded(Color.parseColor("#D32F2F"))
+                    paidButton.setTextColor(Color.WHITE)
+                }
+
+                else -> {
+                    paidButton.text = "ОПЛАЧЕНО ДО КОНЦА ДНЯ"
+                    paidButton.background = rounded(Color.parseColor("#388E3C"))
+                    paidButton.setTextColor(Color.WHITE)
+                }
+            }
+        }
+
+        updatePaidButton()
 
         val dialog = AlertDialog.Builder(context)
             .setTitle("Зона Юрмалы")
@@ -70,16 +122,28 @@ class JurmalaDialog(
         }
 
         paidButton.setOnClickListener {
-            val dayKey = currentDayKey()
-            if (store.isPaidToday(dayKey)) {
-                store.clearPaidToday()
-                updatePaidButton(paidButton)
-                Toast.makeText(context, "Статус сброшен: не оплачено", Toast.LENGTH_SHORT).show()
-            } else {
-                store.setPaidToday(dayKey)
-                updatePaidButton(paidButton)
-                Toast.makeText(context, "Оплачено до конца дня", Toast.LENGTH_SHORT).show()
+            val entered = store.isEnteredToday()
+            if (!entered) {
+                Toast.makeText(context, "Сейчас статус: ВНЕ ЗОНЫ", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
             }
+
+            if (store.isPaidToday()) {
+                store.clearPaidToday()
+                Toast.makeText(context, "Статус: НЕ ОПЛАЧЕНО", Toast.LENGTH_SHORT).show()
+            } else {
+                store.setPaidToday()
+                Toast.makeText(context, "Статус: ОПЛАЧЕНО ДО КОНЦА ДНЯ", Toast.LENGTH_SHORT).show()
+            }
+
+            updatePaidButton()
+        }
+
+        paidButton.setOnLongClickListener {
+            store.resetToOutOfZone()
+            updatePaidButton()
+            Toast.makeText(context, "Сброс в состояние: ВНЕ ЗОНЫ", Toast.LENGTH_SHORT).show()
+            true
         }
 
         addButton.setOnClickListener {
@@ -99,18 +163,6 @@ class JurmalaDialog(
         }
 
         dialog.show()
-    }
-
-    private fun updatePaidButton(button: Button) {
-        if (store.isPaidToday(currentDayKey())) {
-            button.text = "ОПЛАЧЕНО ДО КОНЦА ДНЯ"
-            button.setBackgroundColor(Color.parseColor("#2E7D32"))
-            button.setTextColor(Color.WHITE)
-        } else {
-            button.text = "НЕ ОПЛАЧЕНО"
-            button.setBackgroundColor(Color.parseColor("#C62828"))
-            button.setTextColor(Color.WHITE)
-        }
     }
 
     private fun showAddDialog(adapter: ArrayAdapter<String>) {
@@ -196,8 +248,8 @@ class JurmalaDialog(
         val lat = EditText(context).apply {
             hint = "Широта"
             inputType = InputType.TYPE_CLASS_NUMBER or
-                InputType.TYPE_NUMBER_FLAG_DECIMAL or
-                InputType.TYPE_NUMBER_FLAG_SIGNED
+                    InputType.TYPE_NUMBER_FLAG_DECIMAL or
+                    InputType.TYPE_NUMBER_FLAG_SIGNED
             setText(point?.lat?.toString().orEmpty())
         }
         container.addView(lat)
@@ -205,8 +257,8 @@ class JurmalaDialog(
         val lng = EditText(context).apply {
             hint = "Долгота"
             inputType = InputType.TYPE_CLASS_NUMBER or
-                InputType.TYPE_NUMBER_FLAG_DECIMAL or
-                InputType.TYPE_NUMBER_FLAG_SIGNED
+                    InputType.TYPE_NUMBER_FLAG_DECIMAL or
+                    InputType.TYPE_NUMBER_FLAG_SIGNED
             setText(point?.lng?.toString().orEmpty())
         }
         container.addView(lng)
@@ -223,46 +275,15 @@ class JurmalaDialog(
 
     private fun buildPointFromForm(form: PointForm): JurmalaPoint? {
         val name = form.name.text.toString().trim()
-        val latRaw = form.lat.text.toString().trim().replace(',', '.')
-        val lngRaw = form.lng.text.toString().trim().replace(',', '.')
-        val radiusRaw = form.radius.text.toString().trim()
+        val lat = form.lat.text.toString().replace(',', '.').toDoubleOrNull()
+        val lng = form.lng.text.toString().replace(',', '.').toDoubleOrNull()
+        val radius = form.radius.text.toString().toIntOrNull()
 
-        if (name.isBlank()) {
-            Toast.makeText(context, "Введите название точки", Toast.LENGTH_SHORT).show()
+        if (name.isBlank() || lat == null || lng == null || radius == null) {
+            Toast.makeText(context, "Проверь введённые данные", Toast.LENGTH_SHORT).show()
             return null
         }
 
-        val lat = latRaw.toDoubleOrNull()
-        if (lat == null) {
-            Toast.makeText(context, "Неверная широта", Toast.LENGTH_SHORT).show()
-            return null
-        }
-
-        val lng = lngRaw.toDoubleOrNull()
-        if (lng == null) {
-            Toast.makeText(context, "Неверная долгота", Toast.LENGTH_SHORT).show()
-            return null
-        }
-
-        val radius = radiusRaw.toIntOrNull()
-        if (radius == null || radius <= 0) {
-            Toast.makeText(context, "Неверный радиус", Toast.LENGTH_SHORT).show()
-            return null
-        }
-
-        return JurmalaPoint(
-            name = name,
-            lat = lat,
-            lng = lng,
-            radius = radius
-        )
-    }
-
-    private fun currentDayKey(): String {
-        val calendar = Calendar.getInstance()
-        val year = calendar.get(Calendar.YEAR)
-        val month = calendar.get(Calendar.MONTH) + 1
-        val day = calendar.get(Calendar.DAY_OF_MONTH)
-        return String.format(Locale.US, "%04d-%02d-%02d", year, month, day)
+        return JurmalaPoint(name, lat, lng, radius)
     }
 }

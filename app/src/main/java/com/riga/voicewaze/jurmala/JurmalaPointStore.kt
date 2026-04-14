@@ -15,6 +15,7 @@ class JurmalaPointStore(context: Context) {
         private const val KEY_PENDING_DAY = "pending_day"
         private const val KEY_PENDING_POINT_NAME = "pending_point_name"
         private const val KEY_LAST_LATE_REMINDER_AT = "last_late_reminder_at"
+        private const val KEY_ENTERED_DAY = "entered_day"
     }
 
     fun savePoints(list: List<JurmalaPoint>) {
@@ -57,19 +58,27 @@ class JurmalaPointStore(context: Context) {
         return prefs.getBoolean(KEY_ENABLED, false)
     }
 
-    fun setPaidToday(dayKey: String) {
+    fun setPaidToday(dayKey: String = JurmalaTime.todayKey()) {
         prefs.edit().putString(KEY_PAID_DAY, dayKey).apply()
         clearPendingToday()
     }
 
-    fun isPaidToday(dayKey: String): Boolean {
+    fun isPaidToday(dayKey: String = JurmalaTime.todayKey()): Boolean {
         return prefs.getString(KEY_PAID_DAY, "") == dayKey
+    }
+
+    fun clearPaidToday() {
+        prefs.edit()
+            .remove(KEY_PAID_DAY)
+            .remove(KEY_LAST_LATE_REMINDER_AT)
+            .apply()
     }
 
     fun markZoneEnteredToday(dayKey: String, pointName: String) {
         prefs.edit()
             .putString(KEY_PENDING_DAY, dayKey)
             .putString(KEY_PENDING_POINT_NAME, pointName)
+            .putString(KEY_ENTERED_DAY, dayKey)
             .apply()
     }
 
@@ -95,10 +104,21 @@ class JurmalaPointStore(context: Context) {
         prefs.edit().putLong(KEY_LAST_LATE_REMINDER_AT, timestamp).apply()
     }
 
-    fun clearPaidToday() {
-        prefs.edit()
-            .remove(KEY_PAID_DAY)
-            .remove(KEY_LAST_LATE_REMINDER_AT)
-            .apply()
+    fun isEnteredToday(dayKey: String = JurmalaTime.todayKey()): Boolean {
+        return prefs.getString(KEY_ENTERED_DAY, "") == dayKey
+    }
+
+    fun setEnteredToday(dayKey: String = JurmalaTime.todayKey()) {
+        prefs.edit().putString(KEY_ENTERED_DAY, dayKey).apply()
+    }
+
+    fun clearEnteredToday() {
+        prefs.edit().remove(KEY_ENTERED_DAY).apply()
+    }
+
+    fun resetToOutOfZone() {
+        clearPaidToday()
+        clearPendingToday()
+        clearEnteredToday()
     }
 }
