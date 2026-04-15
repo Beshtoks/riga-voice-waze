@@ -271,9 +271,7 @@ class MainActivity : AppCompatActivity() {
 
     private val locationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) {
-                startJurmalaLocationMonitoringIfAllowed()
-            } else {
+            if (!granted) {
                 toast("Нет доступа к геолокации")
             }
         }
@@ -1497,27 +1495,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        startJurmalaLocationMonitoringIfAllowed()
-        uiHandler.removeCallbacks(jurmalaLateReminderRunnable)
-        uiHandler.post(jurmalaLateReminderRunnable)
     }
 
     override fun onPause() {
         super.onPause()
-        uiHandler.removeCallbacks(jurmalaLateReminderRunnable)
-        try {
-            jurmalaLocationManager.stop()
-        } catch (_: Exception) {
-        }
     }
 
     private fun handleJurmalaZoneEntered(point: JurmalaPoint) {
-        val dayKey = currentDayKey()
-        if (jurmalaStore.isPaidToday(dayKey)) return
-        if (isFinishing || isDestroyed) return
-
-        jurmalaStore.markZoneEnteredToday(dayKey, point.name)
-        showJurmalaPaymentDialog(point.name)
+        // Локальная обработка въезда отключена.
+        // Предупреждение показывает JurmalaForegroundService через JurmalaAlertActivity.
     }
 
     private fun showJurmalaPaymentDialog(pointName: String) {
@@ -1568,32 +1554,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkLateJurmalaReminder() {
-
-        val dayKey = currentDayKey()
-        if (!isLateJurmalaReminder()) return
-        if (jurmalaStore.isPaidToday(dayKey)) return
-        if (activeJurmalaPaymentDialog?.isShowing == true) return
-        if (isFinishing || isDestroyed) return
-
-        val pointName = jurmalaStore.getPendingPointName(dayKey) ?: return
-        val now = System.currentTimeMillis()
-        val lastShown = jurmalaStore.getLastLateReminderAt()
-        if (now < suppressNextLateReminderUntil) return
-        if (lastShown != 0L && now - lastShown < JURMALA_LATE_REMINDER_INTERVAL_MS) return
-
-        jurmalaStore.setLastLateReminderAt(now)
-        showJurmalaPaymentDialog(pointName)
+        // Поздние напоминания из MainActivity отключены.
     }
 
     private fun playJurmalaReminderTone() {
-        try {
-            if (isLateJurmalaReminder()) {
-                toneGenerator.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 700)
-            } else {
-                toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 300)
-            }
-        } catch (_: Exception) {
-        }
+        // Локальный звук отключён.
     }
 
     private fun isLateJurmalaReminder(): Boolean {
