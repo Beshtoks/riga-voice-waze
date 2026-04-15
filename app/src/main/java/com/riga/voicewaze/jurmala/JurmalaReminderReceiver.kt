@@ -1,6 +1,9 @@
 package com.riga.voicewaze.jurmala
 
-import android.app.*
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -90,11 +93,11 @@ class JurmalaReminderReceiver : BroadcastReceiver() {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
-            .setFullScreenIntent(pendingIntent, true) // ключевая строка
+            .setFullScreenIntent(pendingIntent, true)
 
-        // включаем экран
         val notification = builder.build()
 
-        manager.notify(1001, notification)
+        val notificationId = ((System.currentTimeMillis() / 1000L) % Int.MAX_VALUE).toInt()
+        manager.notify(notificationId, notification)
     }
 }
