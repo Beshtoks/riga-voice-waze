@@ -14,14 +14,13 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.Switch
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 
 class JurmalaDialog(
     private val context: Context,
     private val store: JurmalaPointStore,
-    private val ensureNotificationPermission: (((Boolean) -> Unit) -> Unit)? = null
+    private val onStateChanged: (() -> Unit)? = null
 ) {
 
     private var points = store.loadPoints()
@@ -33,12 +32,6 @@ class JurmalaDialog(
             orientation = LinearLayout.VERTICAL
             setPadding(40, 40, 40, 40)
         }
-
-        val toggle = Switch(context).apply {
-            text = "Контроль Юрмалы"
-            isChecked = store.isEnabled()
-        }
-        layout.addView(toggle)
 
         val paidButton = Button(context)
 
@@ -95,7 +88,7 @@ class JurmalaDialog(
 
             when {
                 !entered -> {
-                    paidButton.text = "ВНЕ ЗОНЫ"
+                    paidButton.text = "СБРОС ЗОНЫ"
                     paidButton.background = rounded(Color.parseColor("#696969"))
                     paidButton.setTextColor(Color.WHITE)
                 }
@@ -112,6 +105,8 @@ class JurmalaDialog(
                     paidButton.setTextColor(Color.WHITE)
                 }
             }
+
+            onStateChanged?.invoke()
         }
 
         updatePaidButton()
@@ -122,71 +117,16 @@ class JurmalaDialog(
             .setNegativeButton("Закрыть", null)
             .create()
 
-        var ignoreToggleCallback = false
-
-        toggle.setOnCheckedChangeListener { buttonView, isChecked ->
-            if (ignoreToggleCallback) return@setOnCheckedChangeListener
-
-            val serviceIntent = Intent(context, JurmalaForegroundService::class.java)
-
-            if (isChecked) {
-                val permissionRequester = ensureNotificationPermission
-
-                if (permissionRequester != null) {
-                    permissionRequester { granted ->
-                        if (granted) {
-                            store.setEnabled(true)
-                            ContextCompat.startForegroundService(context, serviceIntent)
-                            updatePaidButton()
-                        } else {
-                            ignoreToggleCallback = true
-                            buttonView.isChecked = false
-                            ignoreToggleCallback = false
-                            store.setEnabled(false)
-                            updatePaidButton()
-                        }
-                    }
-                } else {
-                    store.setEnabled(true)
-                    ContextCompat.startForegroundService(context, serviceIntent)
-                    updatePaidButton()
-                }
-            } else {
-                store.setEnabled(false)
-                context.stopService(serviceIntent)
-                updatePaidButton()
-            }
-        }
-
         paidButton.setOnClickListener {
-            val entered = store.isEnteredToday()
-            if (!entered) {
-                Toast.makeText(context, "Сейчас статус: ВНЕ ЗОНЫ", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            if (store.isPaidToday()) {
-                store.clearPaidToday()
-                Toast.makeText(context, "Статус: НЕ ОПЛАЧЕНО", Toast.LENGTH_SHORT).show()
-            } else {
-                store.setPaidToday()
-                Toast.makeText(context, "Статус: ОПЛАЧЕНО ДО КОНЦА ДНЯ", Toast.LENGTH_SHORT).show()
-            }
-
-            updatePaidButton()
-        }
-
-        paidButton.setOnLongClickListener {
             store.resetToOutOfZone()
             updatePaidButton()
+            onStateChanged?.invoke()
             Toast.makeText(context, "Сброс в состояние: ВНЕ ЗОНЫ", Toast.LENGTH_SHORT).show()
 
             if (store.isEnabled()) {
                 val serviceIntent = Intent(context, JurmalaForegroundService::class.java)
                 ContextCompat.startForegroundService(context, serviceIntent)
             }
-
-            true
         }
 
         addButton.setOnClickListener {
@@ -201,6 +141,7 @@ class JurmalaDialog(
             points.removeAt(position)
             store.savePoints(points)
             reloadAdapter(adapter)
+            onStateChanged?.invoke()
             Toast.makeText(context, "Точка удалена", Toast.LENGTH_SHORT).show()
             true
         }
@@ -221,6 +162,7 @@ class JurmalaDialog(
 
         dialog.setOnDismissListener {
             uiHandler.removeCallbacks(liveRefreshRunnable)
+            onStateChanged?.invoke()
         }
 
         dialog.show()

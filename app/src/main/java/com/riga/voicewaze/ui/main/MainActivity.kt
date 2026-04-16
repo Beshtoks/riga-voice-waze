@@ -83,6 +83,7 @@ class MainActivity : AppCompatActivity() {
     )
 
     private lateinit var btnRix: Button
+    private lateinit var btnJurmalaTop: Button
     private var rixEntryTimestamp: Long = 0L
     private lateinit var btnMicRu: Button
     private lateinit var btnMicLv: Button
@@ -329,6 +330,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         btnRix = findViewById(R.id.btnRix)
+        btnJurmalaTop = findViewById(R.id.btnJurmalaTop)
         btnMicRu = findViewById(R.id.btnMicRu)
         btnMicLv = findViewById(R.id.btnMicLv)
         etInput = findViewById(R.id.etInput)
@@ -345,6 +347,10 @@ class MainActivity : AppCompatActivity() {
             handleRixButtonClick()
         }
 
+        btnJurmalaTop.setOnClickListener {
+            toggleJurmalaTopButton()
+        }
+
         val streetRepository = StreetRepository(this)
         streetMatcher = StreetMatcher(streetRepository)
         landmarkRepository = LandmarkRepository(this)
@@ -355,7 +361,7 @@ class MainActivity : AppCompatActivity() {
         addressPreprocessor = AddressPreprocessor()
 
         jurmalaStore = JurmalaPointStore(this)
-        val jurmalaDialog = JurmalaDialog(this, jurmalaStore)
+        val jurmalaDialog = JurmalaDialog(this, jurmalaStore, onStateChanged = ::updateJurmalaTopButton)
         jurmalaLocationManager = JurmalaLocationManager(
             context = this,
             store = jurmalaStore,
@@ -365,6 +371,11 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+
+        btnJurmalaTop.setOnLongClickListener {
+            jurmalaDialog.show()
+            true
+        }
 
         requestLocationPermissionIfNeeded()
 
@@ -411,11 +422,6 @@ class MainActivity : AppCompatActivity() {
         btnSearch.setOnClickListener {
             autoOpenAfterVoice = false
             handleSearch(etInput.text.toString(), false)
-        }
-
-        btnSearch.setOnLongClickListener {
-            jurmalaDialog.show()
-            true
         }
 
         btnWaze.setOnClickListener {
@@ -1662,13 +1668,63 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        updateJurmalaTopButton()
     }
 
     override fun onPause() {
         super.onPause()
     }
 
+
+    private fun toggleJurmalaTopButton() {
+        val enabled = !jurmalaStore.isEnabled()
+        jurmalaStore.setEnabled(enabled)
+
+        val serviceIntent = Intent(this, com.riga.voicewaze.jurmala.JurmalaForegroundService::class.java)
+
+        if (enabled) {
+            ContextCompat.startForegroundService(this, serviceIntent)
+        } else {
+            stopService(serviceIntent)
+        }
+
+        updateJurmalaTopButton()
+    }
+
+    private fun updateJurmalaTopButton() {
+        val text: String
+        val color: String
+
+        when {
+            !jurmalaStore.isEnabled() -> {
+                text = "Jūrmala Off"
+                color = "#222222"
+            }
+
+            jurmalaStore.isPaidToday() -> {
+                text = "Оплачено"
+                color = "#388E3C"
+            }
+
+            jurmalaStore.isEnteredToday() -> {
+                text = "Не оплачено"
+                color = "#D32F2F"
+            }
+
+            else -> {
+                text = "Jūrmala On"
+                color = "#2E7D32"
+            }
+        }
+
+        btnJurmalaTop.text = text
+        btnJurmalaTop.setTextColor(Color.WHITE)
+        btnJurmalaTop.backgroundTintList =
+            android.content.res.ColorStateList.valueOf(Color.parseColor(color))
+    }
+
     private fun handleJurmalaZoneEntered(point: JurmalaPoint) {
+        updateJurmalaTopButton()
         // Локальная обработка въезда отключена.
         // Предупреждение показывает JurmalaForegroundService через JurmalaAlertActivity.
     }
@@ -1699,6 +1755,7 @@ class MainActivity : AppCompatActivity() {
             .setCancelable(false)
             .setPositiveButton("Оплатить") { _, _ ->
                 jurmalaStore.setPaidToday(dayKey)
+                updateJurmalaTopButton()
                 toast("Напоминание отключено до 23:59")
             }
             .setNegativeButton("Спасибо") { _, _ ->
