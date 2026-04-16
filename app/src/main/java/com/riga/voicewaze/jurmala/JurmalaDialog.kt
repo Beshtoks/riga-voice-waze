@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
@@ -93,7 +95,7 @@ class JurmalaDialog(
             when {
                 !entered -> {
                     paidButton.text = "ВНЕ ЗОНЫ"
-                    paidButton.background = rounded(Color.parseColor("#696969")) // DimGrey
+                    paidButton.background = rounded(Color.parseColor("#696969"))
                     paidButton.setTextColor(Color.WHITE)
                 }
 
@@ -128,6 +130,8 @@ class JurmalaDialog(
             } else {
                 context.stopService(serviceIntent)
             }
+
+            updatePaidButton()
         }
 
         paidButton.setOnClickListener {
@@ -152,6 +156,12 @@ class JurmalaDialog(
             store.resetToOutOfZone()
             updatePaidButton()
             Toast.makeText(context, "Сброс в состояние: ВНЕ ЗОНЫ", Toast.LENGTH_SHORT).show()
+
+            if (store.isEnabled()) {
+                val serviceIntent = Intent(context, JurmalaForegroundService::class.java)
+                ContextCompat.startForegroundService(context, serviceIntent)
+            }
+
             true
         }
 
@@ -169,6 +179,24 @@ class JurmalaDialog(
             reloadAdapter(adapter)
             Toast.makeText(context, "Точка удалена", Toast.LENGTH_SHORT).show()
             true
+        }
+
+        val uiHandler = Handler(Looper.getMainLooper())
+        val liveRefreshRunnable = object : Runnable {
+            override fun run() {
+                if (dialog.isShowing) {
+                    updatePaidButton()
+                    uiHandler.postDelayed(this, 400)
+                }
+            }
+        }
+
+        dialog.setOnShowListener {
+            uiHandler.post(liveRefreshRunnable)
+        }
+
+        dialog.setOnDismissListener {
+            uiHandler.removeCallbacks(liveRefreshRunnable)
         }
 
         dialog.show()
@@ -273,7 +301,7 @@ class JurmalaDialog(
         container.addView(lng)
 
         val radius = EditText(context).apply {
-            hint = "Радиус (м)"
+            hint = "Радиус (метры)"
             inputType = InputType.TYPE_CLASS_NUMBER
             setText(point?.radius?.toString().orEmpty())
         }
@@ -284,12 +312,12 @@ class JurmalaDialog(
 
     private fun buildPointFromForm(form: PointForm): JurmalaPoint? {
         val name = form.name.text.toString().trim()
-        val lat = form.lat.text.toString().replace(',', '.').toDoubleOrNull()
-        val lng = form.lng.text.toString().replace(',', '.').toDoubleOrNull()
-        val radius = form.radius.text.toString().toIntOrNull()
+        val lat = form.lat.text.toString().trim().toDoubleOrNull()
+        val lng = form.lng.text.toString().trim().toDoubleOrNull()
+        val radius = form.radius.text.toString().trim().toIntOrNull()
 
-        if (name.isBlank() || lat == null || lng == null || radius == null) {
-            Toast.makeText(context, "Проверь введённые данные", Toast.LENGTH_SHORT).show()
+        if (name.isBlank() || lat == null || lng == null || radius == null || radius <= 0) {
+            Toast.makeText(context, "Заполни все поля корректно", Toast.LENGTH_SHORT).show()
             return null
         }
 

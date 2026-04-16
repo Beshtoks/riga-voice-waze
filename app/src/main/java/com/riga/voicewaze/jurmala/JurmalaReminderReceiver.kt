@@ -46,14 +46,15 @@ class JurmalaReminderReceiver : BroadcastReceiver() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
 
-            val soundUri = Uri.parse("android.resource://${context.packageName}/raw/jurmala_alert_urgent")
+            val soundUri =
+                Uri.parse("android.resource://${context.packageName}/raw/jurmala_alert_urgent")
 
             val channel = NotificationChannel(
                 channelId,
-                "Jurmala strong alerts",
+                "Юрмала — уведомления",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Critical Jurmala alerts"
+                description = "Критические напоминания Юрмалы"
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 500, 300, 500)
                 setSound(
@@ -80,8 +81,19 @@ class JurmalaReminderReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val title = "Юрмала — требуется подтверждение"
-        val text = "Нажми, чтобы открыть окно и подтвердить"
+        val title = when (type) {
+            "2330" -> "Юрмала — требуется подтверждение"
+            "10" -> "Юрмала — повторное напоминание"
+            "60" -> "Юрмала — напоминание"
+            else -> "Юрмала"
+        }
+
+        val text = when (type) {
+            "2330" -> "После 23:30 требуется подтверждение оплаты"
+            "10" -> "Оплата ещё не подтверждена"
+            "60" -> "Напоминание по въезду в зону"
+            else -> "Нажми, чтобы открыть окно и подтвердить"
+        }
 
         val builder = Notification.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)

@@ -1,9 +1,12 @@
 package com.riga.voicewaze.jurmala
 
 import android.app.Activity
+import android.app.KeyguardManager
+import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.Gravity
@@ -19,9 +22,27 @@ class JurmalaAlertActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+            km.requestDismissKeyguard(this, null)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                        WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
+        }
+
         store = JurmalaPointStore(this)
 
-        val pointName = intent.getStringExtra("point_name") ?: "Юрмала"
+        val pointName =
+            intent.getStringExtra(JurmalaForegroundService.EXTRA_POINT_NAME)
+                ?: intent.getStringExtra("point_name")
+                ?: "Юрмала"
 
         window?.setLayout(
             WindowManager.LayoutParams.WRAP_CONTENT,
