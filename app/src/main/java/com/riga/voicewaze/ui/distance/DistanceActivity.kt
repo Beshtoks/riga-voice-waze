@@ -10,14 +10,24 @@ import android.media.ToneGenerator
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.text.Editable
+import android.text.InputType
+import android.text.SpannableString
+import android.text.Spanned
 import android.text.TextWatcher
+import android.text.style.ForegroundColorSpan
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.widget.NestedScrollView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.riga.voicewaze.R
@@ -49,10 +59,6 @@ import kotlin.math.sqrt
 
 class DistanceActivity : AppCompatActivity() {
 
-    private enum class TargetField {
-        START, END
-    }
-
     private data class PointState(
         var inputText: String = "",
         var processedQuery: ProcessedAddressQuery? = null,
@@ -60,10 +66,14 @@ class DistanceActivity : AppCompatActivity() {
         var latitude: Double? = null,
         var longitude: Double? = null,
         var validation: HouseValidationResult = HouseValidationResult(HouseValidationStatus.VALID),
-        var confirmed: Boolean = false
+        var confirmed: Boolean = false,
+        var suppressWatcher: Boolean = false
     )
 
     private data class SectionViews(
+        val root: LinearLayout,
+        val tvTitle: TextView,
+        val btnRemove: Button,
         val input: EditText,
         val btnRu: Button,
         val btnLv: Button,
@@ -71,11 +81,24 @@ class DistanceActivity : AppCompatActivity() {
         val tvResult: TextView,
         val tvValidation: TextView,
         val tvCoords: TextView,
-        val rvSuggestions: RecyclerView
+        val rvSuggestions: RecyclerView,
+        val adapter: SuggestionAdapter
     )
 
-    private lateinit var startViews: SectionViews
-    private lateinit var endViews: SectionViews
+    private data class RoadRouteResult(
+        val distanceKm: Double,
+        val durationMinutes: Double
+    )
+
+    private data class MainAddressParts(
+        val street: String,
+        val houseNumber: String?,
+        val city: String
+    )
+
+    private lateinit var sectionsContainer: LinearLayout
+    private lateinit var btnAddPoint: Button
+    private lateinit var scrollSections: NestedScrollView
 
     private lateinit var tvDirectDistance: TextView
     private lateinit var tvRoadDistance: TextView
@@ -88,26 +111,21 @@ class DistanceActivity : AppCompatActivity() {
     private lateinit var wavRecorder: WavRecorder
     private lateinit var cloudTranscriber: GoogleCloudLatvianTranscriber
 
-    private lateinit var startSuggestionAdapter: SuggestionAdapter
-    private lateinit var endSuggestionAdapter: SuggestionAdapter
-
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
     private val toneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 80)
 
-    private val startState = PointState()
-    private val endState = PointState()
+    private val sections = mutableListOf<SectionViews>()
+    private val states = mutableListOf<PointState>()
 
-    private var pendingSpeechTarget: TargetField? = null
+    private var pendingSpeechIndex: Int? = null
     private var pendingSpeechIsObject: Boolean = false
-    private var currentLvRecordingTarget: TargetField? = null
-    private var suppressStartWatcher = false
-    private var suppressEndWatcher = false
+    private var currentLvRecordingIndex: Int? = null
 
     private val speechLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val target = pendingSpeechTarget
+            val index = pendingSpeechIndex
             val isObject = pendingSpeechIsObject
-            pendingSpeechTarget = null
+            pendingSpeechIndex = null
             pendingSpeechIsObject = false
 
             val list = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
@@ -117,14 +135,14 @@ class DistanceActivity : AppCompatActivity() {
                 return@registerForActivityResult
             }
 
-            if (target == null) return@registerForActivityResult
+            if (index == null || index !in sections.indices) return@registerForActivityResult
 
-            setInputText(target, spokenText)
+            setInputText(index, spokenText)
 
             if (isObject) {
-                processObjectSearch(target, spokenText)
+                processObjectSearch(index, spokenText)
             } else {
-                processAddressSearch(target, spokenText)
+                processAddressSearch(index, spokenText)
             }
         }
 
@@ -135,13 +153,13 @@ class DistanceActivity : AppCompatActivity() {
                 return@registerForActivityResult
             }
 
-            val target = pendingSpeechTarget ?: currentLvRecordingTarget
-            if (target == null) return@registerForActivityResult
+            val index = pendingSpeechIndex ?: currentLvRecordingIndex
+            if (index == null || index !in sections.indices) return@registerForActivityResult
 
             if (pendingSpeechIsObject) {
-                startGoogleVoiceRecognition(target)
+                startGoogleVoiceRecognition(index)
             } else {
-                toggleLatvianRecording(target)
+                toggleLatvianRecording(index)
             }
         }
 
@@ -156,47 +174,24 @@ class DistanceActivity : AppCompatActivity() {
         wavRecorder = WavRecorder(cacheDir)
         cloudTranscriber = GoogleCloudLatvianTranscriber()
 
-        startViews = SectionViews(
-            input = findViewById(R.id.etStartInput),
-            btnRu = findViewById(R.id.btnStartRu),
-            btnLv = findViewById(R.id.btnStartLv),
-            tvPrepared = findViewById(R.id.tvStartPrepared),
-            tvResult = findViewById(R.id.tvStartResult),
-            tvValidation = findViewById(R.id.tvStartValidation),
-            tvCoords = findViewById(R.id.tvStartCoords),
-            rvSuggestions = findViewById(R.id.rvStartSuggestions)
-        )
-
-        endViews = SectionViews(
-            input = findViewById(R.id.etEndInput),
-            btnRu = findViewById(R.id.btnEndRu),
-            btnLv = findViewById(R.id.btnEndLv),
-            tvPrepared = findViewById(R.id.tvEndPrepared),
-            tvResult = findViewById(R.id.tvEndResult),
-            tvValidation = findViewById(R.id.tvEndValidation),
-            tvCoords = findViewById(R.id.tvEndCoords),
-            rvSuggestions = findViewById(R.id.rvEndSuggestions)
-        )
+        sectionsContainer = findViewById(R.id.sectionsContainer)
+        btnAddPoint = findViewById(R.id.btnAddPoint)
+        scrollSections = findViewById(R.id.scrollSections)
 
         tvDirectDistance = findViewById(R.id.tvDirectDistance)
         tvRoadDistance = findViewById(R.id.tvRoadDistance)
         tvRoadDuration = findViewById(R.id.tvRoadDuration)
 
-        startSuggestionAdapter = SuggestionAdapter { onSuggestionSelected(TargetField.START, it) }
-        endSuggestionAdapter = SuggestionAdapter { onSuggestionSelected(TargetField.END, it) }
-
-        startViews.rvSuggestions.layoutManager = LinearLayoutManager(this)
-        startViews.rvSuggestions.adapter = startSuggestionAdapter
-        startViews.rvSuggestions.isNestedScrollingEnabled = false
-
-        endViews.rvSuggestions.layoutManager = LinearLayoutManager(this)
-        endViews.rvSuggestions.adapter = endSuggestionAdapter
-        endViews.rvSuggestions.isNestedScrollingEnabled = false
-
-        bindSection(TargetField.START, startViews)
-        bindSection(TargetField.END, endViews)
-
         findViewById<Button>(R.id.btnBack).setOnClickListener { finish() }
+
+        btnAddPoint.setOnClickListener {
+            addSection()
+            scrollSections.post { scrollSections.fullScroll(View.FOCUS_DOWN) }
+        }
+
+        addSection()
+        addSection()
+        refreshSectionHeadersAndRemoveButtons()
         clearDistanceResult()
     }
 
@@ -207,29 +202,245 @@ class DistanceActivity : AppCompatActivity() {
         safeStopLatvianRecording()
     }
 
-    private fun bindSection(target: TargetField, views: SectionViews) {
-        views.btnRu.setOnClickListener {
-            pendingSpeechTarget = target
+    private fun addSection() {
+        val state = PointState()
+        states.add(state)
+
+        val sectionIndex = states.lastIndex
+        val section = createSection(sectionIndex)
+        sections.add(section)
+        sectionsContainer.addView(section.root)
+
+        refreshSectionHeadersAndRemoveButtons()
+    }
+
+    private fun removeSection(index: Int) {
+        if (sections.size <= 2) return
+        if (index !in sections.indices) return
+
+        if (currentLvRecordingIndex == index) {
+            safeStopLatvianRecording()
+        } else if (currentLvRecordingIndex != null && currentLvRecordingIndex!! > index) {
+            currentLvRecordingIndex = currentLvRecordingIndex!! - 1
+        }
+
+        if (pendingSpeechIndex != null && pendingSpeechIndex == index) {
+            pendingSpeechIndex = null
+            pendingSpeechIsObject = false
+        } else if (pendingSpeechIndex != null && pendingSpeechIndex!! > index) {
+            pendingSpeechIndex = pendingSpeechIndex!! - 1
+        }
+
+        sectionsContainer.removeView(sections[index].root)
+        sections.removeAt(index)
+        states.removeAt(index)
+
+        refreshSectionHeadersAndRemoveButtons()
+        maybeCalculateDistance()
+    }
+
+    private fun refreshSectionHeadersAndRemoveButtons() {
+        sections.forEachIndexed { index, section ->
+            section.tvTitle.text = sectionTitle(index)
+
+            val removable = sections.size >= 3 && index >= 1
+            section.btnRemove.visibility = if (removable) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun sectionTitle(index: Int): String {
+        return when {
+            index == 0 -> "Откуда"
+            index == sections.lastIndex -> "Куда"
+            else -> "Промежуточный пункт $index"
+        }
+    }
+
+    private fun createSection(index: Int): SectionViews {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(18)
+            }
+        }
+
+        val topRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val tvTitle = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val btnRemove = Button(this).apply {
+            text = "Удалить"
+            setTextColor(Color.WHITE)
+            backgroundTintList = ContextCompat.getColorStateList(context, android.R.color.holo_red_dark)
+            visibility = View.GONE
+            setOnClickListener {
+                val currentIndex = sections.indexOfFirst { it.root === root }
+                if (currentIndex >= 0) removeSection(currentIndex)
+            }
+        }
+
+        topRow.addView(tvTitle)
+        topRow.addView(btnRemove)
+        root.addView(topRow)
+
+        val inputRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(8)
+            }
+        }
+
+        val input = EditText(this).apply {
+            hint = "Адрес или объект"
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.parseColor("#555555"))
+            backgroundTintList = ContextCompat.getColorStateList(context, android.R.color.white)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            inputType = InputType.TYPE_CLASS_TEXT
+        }
+
+        val btnRu = Button(this).apply {
+            text = "RU"
+            setTextColor(Color.WHITE)
+            backgroundTintList = ContextCompat.getColorStateList(context, android.R.color.holo_green_dark)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                marginStart = dp(8)
+            }
+        }
+
+        val btnLv = Button(this).apply {
+            text = "LV"
+            setTextColor(Color.WHITE)
+            backgroundTintList = ContextCompat.getColorStateList(context, android.R.color.holo_blue_dark)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                marginStart = dp(8)
+            }
+        }
+
+        inputRow.addView(input)
+        inputRow.addView(btnRu)
+        inputRow.addView(btnLv)
+        root.addView(inputRow)
+
+        val tvPrepared = createDiagnosticText("#B0BEC5", 14f, 10)
+        val tvResult = createDiagnosticText("#FFFFFF", 17f, 4)
+        val tvValidation = createDiagnosticText("#B0BEC5", 14f, 4)
+        val tvCoords = createDiagnosticText("#B0BEC5", 14f, 2)
+
+        root.addView(tvPrepared)
+        root.addView(tvResult)
+        root.addView(tvValidation)
+        root.addView(tvCoords)
+
+        val rvSuggestions = RecyclerView(this).apply {
+            layoutManager = LinearLayoutManager(this@DistanceActivity)
+            isNestedScrollingEnabled = false
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(8)
+            }
+        }
+
+        val adapter = SuggestionAdapter { suggestion ->
+            val currentIndex = sections.indexOfFirst { it.root === root }
+            if (currentIndex >= 0) onSuggestionSelected(currentIndex, suggestion)
+        }
+        rvSuggestions.adapter = adapter
+        root.addView(rvSuggestions)
+
+        val divider = View(this).apply {
+            setBackgroundColor(Color.parseColor("#333333"))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(1)
+            ).apply {
+                topMargin = dp(18)
+            }
+        }
+        root.addView(divider)
+
+        val section = SectionViews(
+            root = root,
+            tvTitle = tvTitle,
+            btnRemove = btnRemove,
+            input = input,
+            btnRu = btnRu,
+            btnLv = btnLv,
+            tvPrepared = tvPrepared,
+            tvResult = tvResult,
+            tvValidation = tvValidation,
+            tvCoords = tvCoords,
+            rvSuggestions = rvSuggestions,
+            adapter = adapter
+        )
+
+        bindSection(section)
+        return section
+    }
+
+    private fun createDiagnosticText(colorHex: String, sizeSp: Float, topMarginDp: Int): TextView {
+        return TextView(this).apply {
+            setTextColor(Color.parseColor(colorHex))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(topMarginDp)
+            }
+        }
+    }
+
+    private fun bindSection(section: SectionViews) {
+        section.btnRu.setOnClickListener {
+            val index = sections.indexOfFirst { it.root === section.root }
+            if (index < 0) return@setOnClickListener
+            pendingSpeechIndex = index
             pendingSpeechIsObject = true
             ensureMicPermissionAndStart()
         }
 
-        views.btnLv.setOnClickListener {
-            pendingSpeechTarget = target
+        section.btnLv.setOnClickListener {
+            val index = sections.indexOfFirst { it.root === section.root }
+            if (index < 0) return@setOnClickListener
+            pendingSpeechIndex = index
             pendingSpeechIsObject = false
             ensureMicPermissionAndStart()
         }
 
-        views.input.addTextChangedListener(object : TextWatcher {
+        section.input.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
 
             override fun afterTextChanged(s: Editable?) {
-                val suppressed = if (target == TargetField.START) suppressStartWatcher else suppressEndWatcher
-                if (suppressed) return
+                val index = sections.indexOfFirst { it.root === section.root }
+                if (index !in states.indices) return
+
+                val state = states[index]
+                if (state.suppressWatcher) return
 
                 val input = s?.toString()?.trim().orEmpty()
-                val state = stateFor(target)
                 state.inputText = input
                 state.confirmed = false
                 state.latitude = null
@@ -237,14 +448,14 @@ class DistanceActivity : AppCompatActivity() {
                 clearDistanceResult()
 
                 if (input.length < 3) {
-                    clearSectionSuggestions(target)
+                    clearSectionSuggestions(index)
                     if (input.isBlank()) {
-                        resetSectionDiagnostics(target)
+                        resetSectionDiagnostics(index)
                     }
                     return
                 }
 
-                processAddressSearch(target, input, liveMode = true)
+                processAddressSearch(index, input, liveMode = true)
             }
         })
     }
@@ -257,19 +468,19 @@ class DistanceActivity : AppCompatActivity() {
 
         if (granted) {
             if (pendingSpeechIsObject) {
-                val target = pendingSpeechTarget ?: return
-                startGoogleVoiceRecognition(target)
+                val index = pendingSpeechIndex ?: return
+                startGoogleVoiceRecognition(index)
             } else {
-                val target = pendingSpeechTarget ?: return
-                toggleLatvianRecording(target)
+                val index = pendingSpeechIndex ?: return
+                toggleLatvianRecording(index)
             }
         } else {
             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
-    private fun startGoogleVoiceRecognition(target: TargetField) {
-        pendingSpeechTarget = target
+    private fun startGoogleVoiceRecognition(index: Int) {
+        pendingSpeechIndex = index
         pendingSpeechIsObject = true
 
         try {
@@ -286,45 +497,45 @@ class DistanceActivity : AppCompatActivity() {
         }
     }
 
-    private fun toggleLatvianRecording(target: TargetField) {
-        if (currentLvRecordingTarget != null) {
-            if (currentLvRecordingTarget == target) {
-                stopLatvianCloudRecordingAndTranscribe(target)
+    private fun toggleLatvianRecording(index: Int) {
+        if (currentLvRecordingIndex != null) {
+            if (currentLvRecordingIndex == index) {
+                stopLatvianCloudRecordingAndTranscribe(index)
             } else {
                 toast("Сначала останови текущую запись")
             }
             return
         }
 
-        startLatvianCloudRecording(target)
+        startLatvianCloudRecording(index)
     }
 
-    private fun startLatvianCloudRecording(target: TargetField) {
+    private fun startLatvianCloudRecording(index: Int) {
         try {
             wavRecorder.start()
-            currentLvRecordingTarget = target
+            currentLvRecordingIndex = index
             toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 180)
-            buttonForLv(target).text = "STOP"
-            toast(if (target == TargetField.START) "Запись точки отправления..." else "Запись точки назначения...")
+            buttonForLv(index).text = "STOP"
+            toast("Запись пункта...")
         } catch (_: Exception) {
-            currentLvRecordingTarget = null
-            buttonForLv(target).text = "LV"
+            currentLvRecordingIndex = null
+            buttonForLv(index).text = "LV"
             toast("Ошибка записи")
         }
     }
 
-    private fun stopLatvianCloudRecordingAndTranscribe(target: TargetField) {
+    private fun stopLatvianCloudRecordingAndTranscribe(index: Int) {
         val audioFile = try {
             wavRecorder.stop()
         } catch (_: Exception) {
-            currentLvRecordingTarget = null
-            buttonForLv(target).text = "LV"
+            currentLvRecordingIndex = null
+            if (index in sections.indices) buttonForLv(index).text = "LV"
             toast("Ошибка остановки записи")
             return
         }
 
-        currentLvRecordingTarget = null
-        buttonForLv(target).text = "LV"
+        currentLvRecordingIndex = null
+        if (index in sections.indices) buttonForLv(index).text = "LV"
         toneGenerator.startTone(ToneGenerator.TONE_PROP_ACK, 140)
 
         executor.execute {
@@ -335,8 +546,9 @@ class DistanceActivity : AppCompatActivity() {
                         toast("Облако не распознало адрес")
                         return@runOnUiThread
                     }
-                    setInputText(target, transcript)
-                    processAddressSearch(target, transcript)
+                    if (index !in sections.indices) return@runOnUiThread
+                    setInputText(index, transcript)
+                    processAddressSearch(index, transcript)
                 }
             } catch (_: Exception) {
                 runOnUiThread { toast("Ошибка облака") }
@@ -347,24 +559,28 @@ class DistanceActivity : AppCompatActivity() {
     }
 
     private fun safeStopLatvianRecording() {
-        val target = currentLvRecordingTarget ?: return
+        val index = currentLvRecordingIndex ?: return
         try {
             wavRecorder.stop().delete()
         } catch (_: Exception) {
         }
-        currentLvRecordingTarget = null
-        buttonForLv(target).text = "LV"
+        if (index in sections.indices) {
+            buttonForLv(index).text = "LV"
+        }
+        currentLvRecordingIndex = null
     }
 
-    private fun processObjectSearch(target: TargetField, input: String) {
+    private fun processObjectSearch(index: Int, input: String) {
         executor.execute {
             val match = landmarkMatcher.findBestMatch(input)
             val accepted = match.isConfident && !match.address.isBlank() &&
-                match.latitude != null && match.longitude != null
+                    match.latitude != null && match.longitude != null
 
             runOnUiThread {
-                val state = stateFor(target)
-                val views = viewsFor(target)
+                if (index !in states.indices || index !in sections.indices) return@runOnUiThread
+
+                val state = states[index]
+                val views = sections[index]
 
                 state.inputText = input
                 state.finalAddress = if (accepted) match.address else ""
@@ -384,20 +600,22 @@ class DistanceActivity : AppCompatActivity() {
                 views.tvPrepared.text = "Объект: ${if (accepted) match.displayName else ""}"
                 views.tvResult.text = if (accepted) match.address else "Объект не найден"
                 applyValidationUi(views, state.validation)
-                clearSectionSuggestions(target)
+                clearSectionSuggestions(index)
 
                 maybeCalculateDistance()
             }
         }
     }
 
-    private fun processAddressSearch(target: TargetField, input: String, liveMode: Boolean = false) {
+    private fun processAddressSearch(index: Int, input: String, liveMode: Boolean = false) {
         executor.execute {
             val processed = addressPreprocessor.process(input)
             if (!processed.isValid) {
                 runOnUiThread {
-                    val state = stateFor(target)
-                    val views = viewsFor(target)
+                    if (index !in states.indices || index !in sections.indices) return@runOnUiThread
+
+                    val state = states[index]
+                    val views = sections[index]
                     state.inputText = input
                     state.processedQuery = processed
                     state.finalAddress = ""
@@ -412,7 +630,7 @@ class DistanceActivity : AppCompatActivity() {
                     views.tvPrepared.text = ""
                     views.tvResult.text = processed.errorMessage ?: "Адрес введён некорректно"
                     applyValidationUi(views, state.validation)
-                    clearSectionSuggestions(target)
+                    clearSectionSuggestions(index)
                     clearDistanceResult()
                 }
                 return@execute
@@ -426,8 +644,10 @@ class DistanceActivity : AppCompatActivity() {
 
             if (matches.isEmpty()) {
                 runOnUiThread {
-                    val state = stateFor(target)
-                    val views = viewsFor(target)
+                    if (index !in states.indices || index !in sections.indices) return@runOnUiThread
+
+                    val state = states[index]
+                    val views = sections[index]
                     state.inputText = input
                     state.processedQuery = processed
                     state.finalAddress = ""
@@ -440,7 +660,7 @@ class DistanceActivity : AppCompatActivity() {
                         if (processed.displayText.isBlank()) "" else "Preprocessor: ${processed.displayText}"
                     views.tvResult.text = "Улица не найдена"
                     applyValidationUi(views, state.validation)
-                    clearSectionSuggestions(target)
+                    clearSectionSuggestions(index)
                     clearDistanceResult()
                 }
                 return@execute
@@ -467,8 +687,10 @@ class DistanceActivity : AppCompatActivity() {
             }
 
             runOnUiThread {
-                val state = stateFor(target)
-                val views = viewsFor(target)
+                if (index !in states.indices || index !in sections.indices) return@runOnUiThread
+
+                val state = states[index]
+                val views = sections[index]
                 state.inputText = input
                 state.processedQuery = processed
                 state.finalAddress = finalAddress
@@ -483,9 +705,9 @@ class DistanceActivity : AppCompatActivity() {
                 applyValidationUi(views, validationResult)
 
                 if (liveMode) {
-                    adapterFor(target).submitList(others)
+                    views.adapter.submitList(others)
                 } else {
-                    clearSectionSuggestions(target)
+                    clearSectionSuggestions(index)
                 }
 
                 maybeCalculateDistance()
@@ -493,11 +715,13 @@ class DistanceActivity : AppCompatActivity() {
         }
     }
 
-    private fun onSuggestionSelected(target: TargetField, suggestion: AddressSuggestion) {
+    private fun onSuggestionSelected(index: Int, suggestion: AddressSuggestion) {
         val parsed = parseDisplayAddress(suggestion.street)
         if (parsed == null || parsed.houseNumber.isNullOrBlank()) {
-            val state = stateFor(target)
-            val views = viewsFor(target)
+            if (index !in states.indices || index !in sections.indices) return
+
+            val state = states[index]
+            val views = sections[index]
             state.finalAddress = suggestion.street
             state.latitude = null
             state.longitude = null
@@ -519,58 +743,69 @@ class DistanceActivity : AppCompatActivity() {
             val finalAddress = buildFullAddress(parsed.street, canonicalHouse, parsed.city)
 
             runOnUiThread {
-                val state = stateFor(target)
-                val views = viewsFor(target)
+                if (index !in states.indices || index !in sections.indices) return@runOnUiThread
+
+                val state = states[index]
+                val views = sections[index]
                 state.finalAddress = finalAddress
                 state.latitude = validationResult.latitude
                 state.longitude = validationResult.longitude
                 state.validation = validationResult
                 state.confirmed = validationAllowsConfirm(validationResult)
 
-                setInputText(target, finalAddress)
+                setInputText(index, finalAddress)
                 views.tvResult.text = "$finalAddress, Latvija"
                 applyValidationUi(views, validationResult)
-                clearSectionSuggestions(target)
+                clearSectionSuggestions(index)
                 maybeCalculateDistance()
             }
         }
     }
 
     private fun maybeCalculateDistance() {
-        if (!startState.confirmed || !endState.confirmed) {
+        if (states.size < 2) {
             clearDistanceResult()
             return
         }
 
-        val lat1 = startState.latitude ?: return
-        val lon1 = startState.longitude ?: return
-        val lat2 = endState.latitude ?: return
-        val lon2 = endState.longitude ?: return
+        if (states.any { !it.confirmed || it.latitude == null || it.longitude == null }) {
+            clearDistanceResult()
+            return
+        }
 
-        val directKm = haversineKm(lat1, lon1, lat2, lon2)
+        val segments = states.zipWithNext()
+        val directKm = segments.sumOf { (a, b) ->
+            haversineKm(a.latitude!!, a.longitude!!, b.latitude!!, b.longitude!!)
+        }
         tvDirectDistance.text = "По прямой: ${formatKm(directKm)}"
 
         tvRoadDistance.text = "По дороге: расчёт..."
         tvRoadDuration.text = "Время: расчёт..."
 
         executor.execute {
-            val route = calculateRoadRoute(lat1, lon1, lat2, lon2)
+            var roadKm = 0.0
+            var roadMinutes = 0.0
+
+            for ((a, b) in segments) {
+                val route = calculateRoadRoute(a.latitude!!, a.longitude!!, b.latitude!!, b.longitude!!)
+                    ?: run {
+                        runOnUiThread {
+                            tvRoadDistance.text = "По дороге: ошибка"
+                            tvRoadDuration.text = "Время: ошибка"
+                        }
+                        return@execute
+                    }
+
+                roadKm += route.distanceKm
+                roadMinutes += route.durationMinutes
+            }
+
             runOnUiThread {
-                if (route == null) {
-                    tvRoadDistance.text = "По дороге: ошибка"
-                    tvRoadDuration.text = "Время: ошибка"
-                } else {
-                    tvRoadDistance.text = "По дороге: ${formatKm(route.distanceKm)}"
-                    tvRoadDuration.text = "Время: ${formatMinutes(route.durationMinutes)}"
-                }
+                tvRoadDistance.text = "По дороге: ${formatKm(roadKm)}"
+                tvRoadDuration.text = "Время: ${formatMinutes(roadMinutes)}"
             }
         }
     }
-
-    private data class RoadRouteResult(
-        val distanceKm: Double,
-        val durationMinutes: Double
-    )
 
     private fun calculateRoadRoute(
         lat1: Double,
@@ -580,8 +815,8 @@ class DistanceActivity : AppCompatActivity() {
     ): RoadRouteResult? {
         val urlString =
             "https://router.project-osrm.org/route/v1/driving/" +
-                "${String.format(Locale.US, "%.6f", lon1)},${String.format(Locale.US, "%.6f", lat1)};" +
-                "${String.format(Locale.US, "%.6f", lon2)},${String.format(Locale.US, "%.6f", lat2)}?overview=false"
+                    "${String.format(Locale.US, "%.6f", lon1)},${String.format(Locale.US, "%.6f", lat1)};" +
+                    "${String.format(Locale.US, "%.6f", lon2)},${String.format(Locale.US, "%.6f", lat2)}?overview=false"
 
         return try {
             val connection = URL(urlString).openConnection() as HttpURLConnection
@@ -614,7 +849,7 @@ class DistanceActivity : AppCompatActivity() {
         val dLat = Math.toRadians(lat2 - lat1)
         val dLon = Math.toRadians(lon2 - lon1)
         val a = sin(dLat / 2).pow(2) +
-            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
+                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
         val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return earthRadiusKm * c
     }
@@ -629,8 +864,8 @@ class DistanceActivity : AppCompatActivity() {
 
     private fun validationAllowsConfirm(result: HouseValidationResult): Boolean {
         return (result.status == HouseValidationStatus.VALID ||
-            result.status == HouseValidationStatus.RELATED_FOUND) &&
-            result.latitude != null && result.longitude != null
+                result.status == HouseValidationStatus.RELATED_FOUND) &&
+                result.latitude != null && result.longitude != null
     }
 
     private fun applyValidationUi(views: SectionViews, result: HouseValidationResult) {
@@ -647,12 +882,12 @@ class DistanceActivity : AppCompatActivity() {
     private fun buildValidationText(statusText: String, statusColor: Int): CharSequence {
         val prefix = "Проверка: "
         val fullText = prefix + statusText
-        return android.text.SpannableString(fullText).apply {
+        return SpannableString(fullText).apply {
             setSpan(
-                android.text.style.ForegroundColorSpan(statusColor),
+                ForegroundColorSpan(statusColor),
                 prefix.length,
                 fullText.length,
-                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
             )
         }
     }
@@ -697,20 +932,20 @@ class DistanceActivity : AppCompatActivity() {
 
         return when {
             lowered.contains("iela") ||
-                lowered.contains("gatve") ||
-                lowered.contains("prospekts") ||
-                lowered.contains("bulvāris") ||
-                lowered.contains("laukums") ||
-                lowered.contains("krastmala") ||
-                lowered.contains("ceļš") ||
-                lowered.contains("dambis") ||
-                lowered.contains("šķērslīnija") ||
-                lowered.contains("līnija") ||
-                lowered.contains("aleja") ||
-                lowered.contains("gāte") ||
-                lowered.contains("sēta") ||
-                lowered.contains("skvērs") ||
-                lowered.contains("taka") -> street
+                    lowered.contains("gatve") ||
+                    lowered.contains("prospekts") ||
+                    lowered.contains("bulvāris") ||
+                    lowered.contains("laukums") ||
+                    lowered.contains("krastmala") ||
+                    lowered.contains("ceļš") ||
+                    lowered.contains("dambis") ||
+                    lowered.contains("šķērslīnija") ||
+                    lowered.contains("līnija") ||
+                    lowered.contains("aleja") ||
+                    lowered.contains("gāte") ||
+                    lowered.contains("sēta") ||
+                    lowered.contains("skvērs") ||
+                    lowered.contains("taka") -> street
             else -> "$street iela"
         }
     }
@@ -739,12 +974,6 @@ class DistanceActivity : AppCompatActivity() {
         return MainAddressParts(street, houseNumber, city)
     }
 
-    private data class MainAddressParts(
-        val street: String,
-        val houseNumber: String?,
-        val city: String
-    )
-
     private fun extractHouseNumber(input: String): String? {
         val regexes = listOf(
             Regex("""\b\d+[a-zA-ZА-Яа-я]?\s*k-\d+[a-zA-ZА-Яа-я]?\b""", RegexOption.IGNORE_CASE),
@@ -760,13 +989,17 @@ class DistanceActivity : AppCompatActivity() {
         return null
     }
 
-    private fun clearSectionSuggestions(target: TargetField) {
-        adapterFor(target).submitList(emptyList())
+    private fun clearSectionSuggestions(index: Int) {
+        if (index in sections.indices) {
+            sections[index].adapter.submitList(emptyList())
+        }
     }
 
-    private fun resetSectionDiagnostics(target: TargetField) {
-        val views = viewsFor(target)
-        val state = stateFor(target)
+    private fun resetSectionDiagnostics(index: Int) {
+        if (index !in sections.indices || index !in states.indices) return
+
+        val views = sections[index]
+        val state = states[index]
         state.processedQuery = null
         state.finalAddress = ""
         state.latitude = null
@@ -786,25 +1019,19 @@ class DistanceActivity : AppCompatActivity() {
         tvRoadDuration.text = "Время: —"
     }
 
-    private fun setInputText(target: TargetField, value: String) {
-        val edit = viewsFor(target).input
-        if (target == TargetField.START) suppressStartWatcher = true else suppressEndWatcher = true
+    private fun setInputText(index: Int, value: String) {
+        if (index !in sections.indices || index !in states.indices) return
+        val edit = sections[index].input
+        states[index].suppressWatcher = true
         edit.setText(value)
         edit.setSelection(value.length)
-        if (target == TargetField.START) suppressStartWatcher = false else suppressEndWatcher = false
+        states[index].suppressWatcher = false
     }
 
-    private fun stateFor(target: TargetField): PointState =
-        if (target == TargetField.START) startState else endState
+    private fun buttonForLv(index: Int): Button = sections[index].btnLv
 
-    private fun viewsFor(target: TargetField): SectionViews =
-        if (target == TargetField.START) startViews else endViews
-
-    private fun adapterFor(target: TargetField): SuggestionAdapter =
-        if (target == TargetField.START) startSuggestionAdapter else endSuggestionAdapter
-
-    private fun buttonForLv(target: TargetField): Button =
-        if (target == TargetField.START) startViews.btnLv else endViews.btnLv
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
     private fun toast(text: String) {
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
