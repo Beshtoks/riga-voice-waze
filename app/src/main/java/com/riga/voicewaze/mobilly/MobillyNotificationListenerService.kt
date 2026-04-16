@@ -16,8 +16,6 @@ class MobillyNotificationListenerService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val packageName = sbn.packageName.orEmpty()
-        if (!packageName.contains("mobilly", ignoreCase = true)) return
-
         val extras = sbn.notification.extras
         val title = extras.getCharSequence("android.title")?.toString().orEmpty()
         val text = extras.getCharSequence("android.text")?.toString().orEmpty()
@@ -25,20 +23,29 @@ class MobillyNotificationListenerService : NotificationListenerService() {
         val fullText = listOf(title, text, bigText)
             .filter { it.isNotBlank() }
             .joinToString(" ")
+            .trim()
 
         if (fullText.isBlank()) return
+
+        val lowerText = fullText.lowercase()
+        val looksLikeMobilly = packageName.contains("mobilly", ignoreCase = true) ||
+            lowerText.contains("automatic зоне rixa") ||
+            (lowerText.contains("rixa") && lowerText.contains("сумма оплаты")) ||
+            (lowerText.contains("rixa") && lowerText.contains("начата"))
+
+        if (!looksLikeMobilly) return
 
         Log.d(TAG, "PACKAGE: $packageName")
         Log.d(TAG, "TEXT: $fullText")
 
-        if (!fullText.contains("RIXA", ignoreCase = true)) return
+        if (!lowerText.contains("rixa")) return
 
-        if (fullText.contains("начата", ignoreCase = true)) {
+        if (lowerText.contains("начата")) {
             handleRixEntry()
             return
         }
 
-        if (fullText.contains("Сумма оплаты:", ignoreCase = true)) {
+        if (lowerText.contains("сумма оплаты:")) {
             Log.d(TAG, "RIX exit notification detected")
             sendRixEventBroadcast()
         }
