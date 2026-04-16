@@ -20,7 +20,8 @@ import androidx.core.content.ContextCompat
 
 class JurmalaDialog(
     private val context: Context,
-    private val store: JurmalaPointStore
+    private val store: JurmalaPointStore,
+    private val ensureNotificationPermission: (((Boolean) -> Unit) -> Unit)? = null
 ) {
 
     private var points = store.loadPoints()
@@ -121,17 +122,40 @@ class JurmalaDialog(
             .setNegativeButton("Закрыть", null)
             .create()
 
-        toggle.setOnCheckedChangeListener { _, isChecked ->
-            store.setEnabled(isChecked)
+        var ignoreToggleCallback = false
+
+        toggle.setOnCheckedChangeListener { buttonView, isChecked ->
+            if (ignoreToggleCallback) return@setOnCheckedChangeListener
 
             val serviceIntent = Intent(context, JurmalaForegroundService::class.java)
-            if (isChecked) {
-                ContextCompat.startForegroundService(context, serviceIntent)
-            } else {
-                context.stopService(serviceIntent)
-            }
 
-            updatePaidButton()
+            if (isChecked) {
+                val permissionRequester = ensureNotificationPermission
+
+                if (permissionRequester != null) {
+                    permissionRequester { granted ->
+                        if (granted) {
+                            store.setEnabled(true)
+                            ContextCompat.startForegroundService(context, serviceIntent)
+                            updatePaidButton()
+                        } else {
+                            ignoreToggleCallback = true
+                            buttonView.isChecked = false
+                            ignoreToggleCallback = false
+                            store.setEnabled(false)
+                            updatePaidButton()
+                        }
+                    }
+                } else {
+                    store.setEnabled(true)
+                    ContextCompat.startForegroundService(context, serviceIntent)
+                    updatePaidButton()
+                }
+            } else {
+                store.setEnabled(false)
+                context.stopService(serviceIntent)
+                updatePaidButton()
+            }
         }
 
         paidButton.setOnClickListener {

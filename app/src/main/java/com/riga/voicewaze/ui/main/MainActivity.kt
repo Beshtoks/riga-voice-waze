@@ -3,7 +3,10 @@ package com.riga.voicewaze.ui.main
 import android.Manifest
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.media.AudioManager
@@ -61,6 +64,11 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val JURMALA_LATE_REMINDER_INTERVAL_MS = 10 * 60 * 1000L
         private const val JURMALA_LATE_REMINDER_CHECK_MS = 60 * 1000L
+        private const val RIX_FREE_WINDOW_MS = 10 * 60 * 1000L
+        private const val RIX_RESTORE_WINDOW_MS = 24 * 60 * 60 * 1000L
+        private const val RIX_PREFS_NAME = "rix_state"
+        private const val RIX_ENTRY_TIMESTAMP_KEY = "entry_timestamp"
+        private const val RIX_EVENT_ACTION = "com.riga.voicewaze.RIX_EVENT_UPDATED"
     }
 
     private enum class VoiceMode {
@@ -74,6 +82,8 @@ class MainActivity : AppCompatActivity() {
         val city: String
     )
 
+    private lateinit var btnRix: Button
+    private var rixEntryTimestamp: Long = 0L
     private lateinit var btnMicRu: Button
     private lateinit var btnMicLv: Button
     private lateinit var etInput: EditText
@@ -124,6 +134,35 @@ class MainActivity : AppCompatActivity() {
     private var activeLandmarkLongitude: Double? = null
     private var activeJurmalaPaymentDialog: AlertDialog? = null
     private var suppressNextLateReminderUntil: Long = 0L
+
+
+    private val rixEventReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != RIX_EVENT_ACTION) return
+
+            loadRixState()
+            updateRixButtonState()
+        }
+    }
+
+
+    private val rixButtonUpdateRunnable = object : Runnable {
+        override fun run() {
+            updateRixButtonState()
+
+            if (rixEntryTimestamp == 0L) return
+
+            val elapsed = System.currentTimeMillis() - rixEntryTimestamp
+            if (elapsed >= RIX_RESTORE_WINDOW_MS) {
+                clearRixState()
+                updateRixButtonState()
+                return
+            }
+
+            val delay = if (elapsed < RIX_FREE_WINDOW_MS) 1_000L else 60_000L
+            uiHandler.postDelayed(this, delay)
+        }
+    }
 
     private val jurmalaLateReminderRunnable = object : Runnable {
         override fun run() {
@@ -289,6 +328,7 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(R.layout.activity_main)
 
+        btnRix = findViewById(R.id.btnRix)
         btnMicRu = findViewById(R.id.btnMicRu)
         btnMicLv = findViewById(R.id.btnMicLv)
         etInput = findViewById(R.id.etInput)
@@ -300,6 +340,10 @@ class MainActivity : AppCompatActivity() {
         btnSearch = findViewById(R.id.btnSearch)
         btnWaze = findViewById(R.id.btnWaze)
         rvSuggestions = findViewById(R.id.rvSuggestions)
+
+        btnRix.setOnClickListener {
+            handleRixButtonClick()
+        }
 
         val streetRepository = StreetRepository(this)
         streetMatcher = StreetMatcher(streetRepository)
@@ -335,6 +379,8 @@ class MainActivity : AppCompatActivity() {
         btnMicLv.addOnLayoutChangeListener(buttonLayoutListener)
 
         setVoiceMode(VoiceMode.ADDRESS_LV)
+        loadRixState()
+        updateRixButtonState()
         clearDiagnosticLines()
 
         btnMicRu.setOnLongClickListener {
@@ -429,6 +475,21 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    override fun onStart() {
+        super.onStart()
+        ContextCompat.registerReceiver(
+            this,
+            rixEventReceiver,
+            IntentFilter(RIX_EVENT_ACTION),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+    }
+
+    override fun onStop() {
+        super.onStop()
+        unregisterReceiver(rixEventReceiver)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         btnMicLv.removeOnLayoutChangeListener(buttonLayoutListener)
@@ -495,6 +556,112 @@ class MainActivity : AppCompatActivity() {
 
     private fun soundStopRecording() {
         toneGenerator.startTone(ToneGenerator.TONE_PROP_ACK, 140)
+    }
+
+    private fun rixPrefs() = getSharedPreferences(RIX_PREFS_NAME, MODE_PRIVATE)
+
+    private fun loadRixState() {
+        rixEntryTimestamp = rixPrefs().getLong(RIX_ENTRY_TIMESTAMP_KEY, 0L)
+        if (rixEntryTimestamp != 0L) {
+            val elapsed = System.currentTimeMillis() - rixEntryTimestamp
+            if (elapsed >= RIX_RESTORE_WINDOW_MS) {
+                clearRixState()
+            } else {
+                scheduleRixButtonUpdates()
+            }
+        }
+    }
+
+    private fun saveRixEntryTimestamp(timestamp: Long) {
+        rixEntryTimestamp = timestamp
+        rixPrefs().edit().putLong(RIX_ENTRY_TIMESTAMP_KEY, timestamp).apply()
+    }
+
+    private fun clearRixState() {
+        rixEntryTimestamp = 0L
+        rixPrefs().edit().remove(RIX_ENTRY_TIMESTAMP_KEY).apply()
+        uiHandler.removeCallbacks(rixButtonUpdateRunnable)
+    }
+
+    private fun handleRixButtonClick() {
+        if (rixEntryTimestamp == 0L) {
+            saveRixEntryTimestamp(System.currentTimeMillis())
+            updateRixButtonState()
+            scheduleRixButtonUpdates()
+            toast("RIX: тестовый въезд запущен")
+        } else {
+            toast("RIX: тест уже идёт")
+        }
+    }
+
+    private fun scheduleRixButtonUpdates() {
+        uiHandler.removeCallbacks(rixButtonUpdateRunnable)
+        uiHandler.post(rixButtonUpdateRunnable)
+    }
+
+    private fun updateRixButtonState() {
+        if (rixEntryTimestamp == 0L) {
+            applyRixButtonStyle(
+                text = "RIX / FREE",
+                color = "#2E7D32"
+            )
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        val elapsed = now - rixEntryTimestamp
+
+        when {
+            elapsed < RIX_FREE_WINDOW_MS -> {
+                val remaining = RIX_FREE_WINDOW_MS - elapsed
+                val color = when {
+                    remaining > 5 * 60 * 1000L -> "#2E7D32"
+                    remaining > 2 * 60 * 1000L -> "#F9A825"
+                    else -> "#EF6C00"
+                }
+                applyRixButtonStyle(
+                    text = "RIX / ${formatRixMinutesSeconds(remaining)}",
+                    color = color
+                )
+            }
+
+            elapsed < RIX_RESTORE_WINDOW_MS -> {
+                val remaining = RIX_RESTORE_WINDOW_MS - elapsed
+                applyRixButtonStyle(
+                    text = "RIX / ${formatRixHoursMinutes(remaining)}",
+                    color = "#C62828"
+                )
+            }
+
+            else -> {
+                clearRixState()
+                applyRixButtonStyle(
+                    text = "RIX / FREE",
+                    color = "#2E7D32"
+                )
+            }
+        }
+    }
+
+    private fun applyRixButtonStyle(text: String, color: String) {
+        btnRix.text = text
+        btnRix.setTextColor(Color.WHITE)
+        btnRix.backgroundTintList =
+            android.content.res.ColorStateList.valueOf(Color.parseColor(color))
+    }
+
+    private fun formatRixMinutesSeconds(remainingMs: Long): String {
+        val totalSeconds = (remainingMs.coerceAtLeast(0L) + 999L) / 1000L
+        val minutes = totalSeconds / 60L
+        val seconds = totalSeconds % 60L
+        return String.format(Locale.US, "%02d:%02d", minutes, seconds)
+    }
+
+    private fun formatRixHoursMinutes(remainingMs: Long): String {
+        val totalMinutes = (remainingMs.coerceAtLeast(0L) + 59_999L) / 60_000L
+        val hours = totalMinutes / 60L
+        val minutes = totalMinutes % 60L
+        return String.format(Locale.US, "%02d:%02d", hours, minutes)
     }
 
     private fun setVoiceMode(mode: VoiceMode) {
