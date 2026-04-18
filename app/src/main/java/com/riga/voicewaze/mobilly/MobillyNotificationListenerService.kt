@@ -1,65 +1,53 @@
 package com.riga.voicewaze.mobilly
 
-import android.content.Intent
+import android.app.Notification
+import android.os.Handler
+import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-import android.util.Log
+import android.widget.Toast
 
 class MobillyNotificationListenerService : NotificationListenerService() {
 
-    companion object {
-        private const val TAG = "MobillyListener"
-        private const val RIX_PREFS_NAME = "rix_state"
-        private const val RIX_ENTRY_TIMESTAMP_KEY = "entry_timestamp"
-        private const val RIX_EVENT_ACTION = "com.riga.voicewaze.RIX_EVENT_UPDATED"
-    }
-
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        val packageName = sbn.packageName.orEmpty()
-        val extras = sbn.notification.extras
-        val title = extras.getCharSequence("android.title")?.toString().orEmpty()
-        val text = extras.getCharSequence("android.text")?.toString().orEmpty()
-        val bigText = extras.getCharSequence("android.bigText")?.toString().orEmpty()
-        val fullText = listOf(title, text, bigText)
-            .filter { it.isNotBlank() }
-            .joinToString(" ")
-            .trim()
+        val pkg = sbn.packageName ?: return
 
-        if (fullText.isBlank()) return
+        if (!pkg.lowercase().contains("mobilly")) return
 
-        val lowerText = fullText.lowercase()
-        val looksLikeMobilly = packageName.contains("mobilly", ignoreCase = true) ||
-            lowerText.contains("automatic зоне rixa") ||
-            (lowerText.contains("rixa") && lowerText.contains("сумма оплаты")) ||
-            (lowerText.contains("rixa") && lowerText.contains("начата"))
+        val notification: Notification = sbn.notification
+        val extras = notification.extras
 
-        if (!looksLikeMobilly) return
+        val title = extras.getString(Notification.EXTRA_TITLE)?.trim().orEmpty()
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
+        val ticker = notification.tickerText?.toString()?.trim().orEmpty()
 
-        Log.d(TAG, "PACKAGE: $packageName")
-        Log.d(TAG, "TEXT: $fullText")
-
-        if (!lowerText.contains("rixa")) return
-
-        if (lowerText.contains("начата")) {
-            handleRixEntry()
-            return
+        val message = buildString {
+            append("Mobilly")
+            if (title.isNotEmpty()) {
+                append("\n")
+                append(title)
+            }
+            when {
+                text.isNotEmpty() -> {
+                    append("\n")
+                    append(text)
+                }
+                bigText.isNotEmpty() -> {
+                    append("\n")
+                    append(bigText)
+                }
+                ticker.isNotEmpty() -> {
+                    append("\n")
+                    append(ticker)
+                }
+            }
         }
 
-        if (lowerText.contains("сумма оплаты:")) {
-            Log.d(TAG, "RIX exit notification detected")
-            sendRixEventBroadcast()
+        if (message.isBlank()) return
+
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
         }
-    }
-
-    private fun handleRixEntry() {
-        val prefs = getSharedPreferences(RIX_PREFS_NAME, MODE_PRIVATE)
-        val now = System.currentTimeMillis()
-        prefs.edit().putLong(RIX_ENTRY_TIMESTAMP_KEY, now).apply()
-        Log.d(TAG, "RIX entry saved: $now")
-        sendRixEventBroadcast()
-    }
-
-    private fun sendRixEventBroadcast() {
-        sendBroadcast(Intent(RIX_EVENT_ACTION).setPackage(packageName))
     }
 }

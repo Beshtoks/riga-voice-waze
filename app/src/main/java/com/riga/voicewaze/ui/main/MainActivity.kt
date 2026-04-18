@@ -55,6 +55,7 @@ import com.riga.voicewaze.jurmala.JurmalaDialog
 import com.riga.voicewaze.jurmala.JurmalaPoint
 import com.riga.voicewaze.jurmala.JurmalaLocationManager
 import com.riga.voicewaze.jurmala.JurmalaPointStore
+import com.riga.voicewaze.jurmala.JurmalaScheduler
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -1677,10 +1678,23 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun toggleJurmalaTopButton() {
+        val serviceIntent = Intent(this, com.riga.voicewaze.jurmala.JurmalaForegroundService::class.java)
+
+        if (jurmalaStore.isEnteredToday() && !jurmalaStore.isPaidToday()) {
+            jurmalaStore.setPaidToday()
+            JurmalaScheduler.cancelAll(this)
+
+            if (!jurmalaStore.isEnabled()) {
+                jurmalaStore.setEnabled(true)
+                ContextCompat.startForegroundService(this, serviceIntent)
+            }
+
+            updateJurmalaTopButton()
+            return
+        }
+
         val enabled = !jurmalaStore.isEnabled()
         jurmalaStore.setEnabled(enabled)
-
-        val serviceIntent = Intent(this, com.riga.voicewaze.jurmala.JurmalaForegroundService::class.java)
 
         if (enabled) {
             ContextCompat.startForegroundService(this, serviceIntent)
@@ -1696,19 +1710,14 @@ class MainActivity : AppCompatActivity() {
         val color: String
 
         when {
+            jurmalaStore.isEnteredToday() && !jurmalaStore.isPaidToday() -> {
+                text = "Не оплачено"
+                color = "#D32F2F"
+            }
+
             !jurmalaStore.isEnabled() -> {
                 text = "Jūrmala Off"
                 color = "#222222"
-            }
-
-            jurmalaStore.isPaidToday() -> {
-                text = "Оплачено"
-                color = "#388E3C"
-            }
-
-            jurmalaStore.isEnteredToday() -> {
-                text = "Не оплачено"
-                color = "#D32F2F"
             }
 
             else -> {

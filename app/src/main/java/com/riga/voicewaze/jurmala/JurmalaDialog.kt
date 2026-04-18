@@ -119,6 +119,7 @@ class JurmalaDialog(
 
         paidButton.setOnClickListener {
             store.resetToOutOfZone()
+            JurmalaScheduler.cancelAll(context)
             updatePaidButton()
             onStateChanged?.invoke()
             Toast.makeText(context, "Сброс в состояние: ВНЕ ЗОНЫ", Toast.LENGTH_SHORT).show()
