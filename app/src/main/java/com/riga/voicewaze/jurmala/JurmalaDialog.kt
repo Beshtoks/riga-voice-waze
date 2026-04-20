@@ -5,8 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.text.InputType
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
@@ -118,16 +121,29 @@ class JurmalaDialog(
             .create()
 
         paidButton.setOnClickListener {
+            // короткий тап ничего не делает
+        }
+
+        paidButton.setOnLongClickListener {
             store.resetToOutOfZone()
             JurmalaScheduler.cancelAll(context)
+            vibrateShortConfirm()
             updatePaidButton()
             onStateChanged?.invoke()
-            Toast.makeText(context, "Сброс в состояние: ВНЕ ЗОНЫ", Toast.LENGTH_SHORT).show()
+
+            Toast.makeText(
+                context,
+                "Сброс выполнен",
+                Toast.LENGTH_SHORT
+            ).show()
 
             if (store.isEnabled()) {
-                val serviceIntent = Intent(context, JurmalaForegroundService::class.java)
+                val serviceIntent =
+                    Intent(context, JurmalaForegroundService::class.java)
                 ContextCompat.startForegroundService(context, serviceIntent)
             }
+
+            true
         }
 
         addButton.setOnClickListener {
@@ -143,11 +159,18 @@ class JurmalaDialog(
             store.savePoints(points)
             reloadAdapter(adapter)
             onStateChanged?.invoke()
-            Toast.makeText(context, "Точка удалена", Toast.LENGTH_SHORT).show()
+
+            Toast.makeText(
+                context,
+                "Точка удалена",
+                Toast.LENGTH_SHORT
+            ).show()
+
             true
         }
 
         val uiHandler = Handler(Looper.getMainLooper())
+
         val liveRefreshRunnable = object : Runnable {
             override fun run() {
                 if (dialog.isShowing) {
@@ -180,19 +203,26 @@ class JurmalaDialog(
             .create()
             .also { dialog ->
                 dialog.setOnShowListener {
-                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                        val point = buildPointFromForm(form) ?: return@setOnClickListener
-                        points.add(point)
-                        store.savePoints(points)
-                        reloadAdapter(adapter)
-                        dialog.dismiss()
-                    }
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                        .setOnClickListener {
+                            val point =
+                                buildPointFromForm(form)
+                                    ?: return@setOnClickListener
+
+                            points.add(point)
+                            store.savePoints(points)
+                            reloadAdapter(adapter)
+                            dialog.dismiss()
+                        }
                 }
                 dialog.show()
             }
     }
 
-    private fun showEditDialog(index: Int, adapter: ArrayAdapter<String>) {
+    private fun showEditDialog(
+        index: Int,
+        adapter: ArrayAdapter<String>
+    ) {
         val point = points[index]
         val form = createPointForm(point)
 
@@ -204,16 +234,21 @@ class JurmalaDialog(
             .create()
             .also { dialog ->
                 dialog.setOnShowListener {
-                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                        val updated = buildPointFromForm(form) ?: return@setOnClickListener
-                        point.name = updated.name
-                        point.lat = updated.lat
-                        point.lng = updated.lng
-                        point.radius = updated.radius
-                        store.savePoints(points)
-                        reloadAdapter(adapter)
-                        dialog.dismiss()
-                    }
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                        .setOnClickListener {
+                            val updated =
+                                buildPointFromForm(form)
+                                    ?: return@setOnClickListener
+
+                            point.name = updated.name
+                            point.lat = updated.lat
+                            point.lng = updated.lng
+                            point.radius = updated.radius
+
+                            store.savePoints(points)
+                            reloadAdapter(adapter)
+                            dialog.dismiss()
+                        }
                 }
                 dialog.show()
             }
@@ -237,7 +272,10 @@ class JurmalaDialog(
         val radius: EditText
     )
 
-    private fun createPointForm(point: JurmalaPoint? = null): PointForm {
+    private fun createPointForm(
+        point: JurmalaPoint? = null
+    ): PointForm {
+
         val container = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(40, 20, 40, 20)
@@ -251,18 +289,22 @@ class JurmalaDialog(
 
         val lat = EditText(context).apply {
             hint = "Широта"
-            inputType = InputType.TYPE_CLASS_NUMBER or
-                    InputType.TYPE_NUMBER_FLAG_DECIMAL or
-                    InputType.TYPE_NUMBER_FLAG_SIGNED
+            inputType =
+                InputType.TYPE_CLASS_NUMBER or
+                        InputType.TYPE_NUMBER_FLAG_DECIMAL or
+                        InputType.TYPE_NUMBER_FLAG_SIGNED
+
             setText(point?.lat?.toString().orEmpty())
         }
         container.addView(lat)
 
         val lng = EditText(context).apply {
             hint = "Долгота"
-            inputType = InputType.TYPE_CLASS_NUMBER or
-                    InputType.TYPE_NUMBER_FLAG_DECIMAL or
-                    InputType.TYPE_NUMBER_FLAG_SIGNED
+            inputType =
+                InputType.TYPE_CLASS_NUMBER or
+                        InputType.TYPE_NUMBER_FLAG_DECIMAL or
+                        InputType.TYPE_NUMBER_FLAG_SIGNED
+
             setText(point?.lng?.toString().orEmpty())
         }
         container.addView(lng)
@@ -274,20 +316,84 @@ class JurmalaDialog(
         }
         container.addView(radius)
 
-        return PointForm(container, name, lat, lng, radius)
+        return PointForm(
+            container,
+            name,
+            lat,
+            lng,
+            radius
+        )
     }
 
-    private fun buildPointFromForm(form: PointForm): JurmalaPoint? {
-        val name = form.name.text.toString().trim()
-        val lat = form.lat.text.toString().trim().toDoubleOrNull()
-        val lng = form.lng.text.toString().trim().toDoubleOrNull()
-        val radius = form.radius.text.toString().trim().toIntOrNull()
+    private fun buildPointFromForm(
+        form: PointForm
+    ): JurmalaPoint? {
 
-        if (name.isBlank() || lat == null || lng == null || radius == null || radius <= 0) {
-            Toast.makeText(context, "Заполни все поля корректно", Toast.LENGTH_SHORT).show()
+        val name =
+            form.name.text.toString().trim()
+
+        val lat =
+            form.lat.text.toString()
+                .trim()
+                .toDoubleOrNull()
+
+        val lng =
+            form.lng.text.toString()
+                .trim()
+                .toDoubleOrNull()
+
+        val radius =
+            form.radius.text.toString()
+                .trim()
+                .toIntOrNull()
+
+        if (
+            name.isBlank() ||
+            lat == null ||
+            lng == null ||
+            radius == null ||
+            radius <= 0
+        ) {
+            Toast.makeText(
+                context,
+                "Заполни все поля корректно",
+                Toast.LENGTH_SHORT
+            ).show()
+
             return null
         }
 
-        return JurmalaPoint(name, lat, lng, radius)
+        return JurmalaPoint(
+            name,
+            lat,
+            lng,
+            radius
+        )
+    }
+
+    private fun vibrateShortConfirm() {
+        try {
+            @Suppress("DEPRECATION")
+            val vibrator =
+                context.getSystemService(
+                    Context.VIBRATOR_SERVICE
+                ) as Vibrator
+
+            if (!vibrator.hasVibrator()) return
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(
+                    VibrationEffect.createOneShot(
+                        100L,
+                        VibrationEffect.DEFAULT_AMPLITUDE
+                    )
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(100L)
+            }
+
+        } catch (_: Exception) {
+        }
     }
 }

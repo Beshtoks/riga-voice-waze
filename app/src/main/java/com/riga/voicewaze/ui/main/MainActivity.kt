@@ -345,7 +345,18 @@ class MainActivity : AppCompatActivity() {
         rvSuggestions = findViewById(R.id.rvSuggestions)
 
         btnRix.setOnClickListener {
-            handleRixButtonClick()
+            // Тестовый запуск RIX отключён.
+            // Кнопка работает только как индикатор состояния,
+            // реальные изменения приходят от уведомлений Mobilly.
+        }
+
+        btnRix.setOnLongClickListener {
+            Toast.makeText(
+                this,
+                "RIX ожидает уведомления Mobilly",
+                Toast.LENGTH_SHORT
+            ).show()
+            true
         }
 
         btnJurmalaTop.setOnClickListener {

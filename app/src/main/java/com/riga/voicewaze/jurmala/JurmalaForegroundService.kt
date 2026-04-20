@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 
 class JurmalaForegroundService : Service() {
@@ -77,14 +78,24 @@ class JurmalaForegroundService : Service() {
 
         store.setEnteredToday(dayKey)
         store.markZoneEnteredToday(dayKey, point.name)
-
-        // После первого въезда геолокация больше не нужна до ручного сброса.
         locationManager?.stop()
 
         if (store.isAlertShownToday(dayKey)) return
 
         store.setAlertShownToday(dayKey)
-        showAlertNotification(point.name)
+
+        if (canShowOverlay()) {
+            val overlayIntent = Intent(this, JurmalaOverlayService::class.java).apply {
+                putExtra(EXTRA_POINT_NAME, point.name)
+            }
+            startService(overlayIntent)
+        } else {
+            showAlertNotification(point.name)
+        }
+    }
+
+    private fun canShowOverlay(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
     }
 
     private fun buildServiceNotification(): Notification {
